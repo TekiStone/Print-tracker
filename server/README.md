@@ -16,7 +16,4 @@ Endpoints actuels :
 
 - `GET /health`
 - `GET /api/printers`
-- `POST /api/printers`
-- `PATCH /api/printers/:id`
-- `DELETE /api/printers/:id`
 - `GET /api/spools`
