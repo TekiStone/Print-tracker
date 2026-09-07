@@ -8,14 +8,18 @@
     "build": "tsc -b && vite build",
     "lint": "tsc --noEmit && tsc -p tsconfig.server.json",
     "server": "tsx server/index.ts",
+    "migrate": "tsx server/migrate.ts",
     "preview": "vite preview"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.4.1",
     "@zxing/browser": "^0.2.1",
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "express-session": "^1.18.1",
     "pg": "^8.16.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -23,8 +27,11 @@
     "vite": "^6.3.5"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/connect-pg-simple": "^7.0.3",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
+    "@types/express-session": "^1.18.2",
     "@types/node": "^22.15.0",
     "@types/pg": "^8.15.4",
     "@types/react": "^19.1.2",
