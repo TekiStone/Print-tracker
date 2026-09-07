@@ -155,6 +155,7 @@ function Dashboard({ user }: { user: { name: string } }) {
 export function App() {
   const { user, status, logout } = useAuth()
   const [activeNav, setActiveNav] = useState('Vue d’ensemble')
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
 
   if (status === 'loading') {
     return <div className="auth-shell"><p>Chargement…</p></div>
@@ -166,24 +167,27 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className={isMobileNavOpen ? 'sidebar sidebar--open' : 'sidebar'}>
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
+        <button type="button" className="mobile-close" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)}>×</button>
         <nav>
           {['Vue d’ensemble', 'Imprimantes', 'Bobines'].map((item) => (
-            <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(item)}>
+            <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => { setActiveNav(item); setIsMobileNavOpen(false) }}>
               <Icon>{item === 'Vue d’ensemble' ? '⌂' : item === 'Imprimantes' ? '▣' : '◉'}</Icon>{item}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
           <div className="profile"><div className="profile-avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{user.role === 'admin' ? 'Administrateur' : 'Membre'}</small></div></div>
-          <button type="button" className="nav-item" onClick={() => logout()}><Icon>⏻</Icon>Déconnexion</button>
+          <button type="button" className="nav-item" onClick={() => { setIsMobileNavOpen(false); logout() }}><Icon>⏻</Icon>Déconnexion</button>
         </div>
       </aside>
+      {isMobileNavOpen && <button type="button" className="sidebar-overlay" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)} />}
 
       <main className="main">
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">P</div><strong>print<span>tracker</span></strong></div>
+          <button type="button" className="mobile-menu" aria-label="Ouvrir le menu" aria-expanded={isMobileNavOpen} onClick={() => setIsMobileNavOpen((open) => !open)}>☰</button>
           <button type="button" className="text-button" onClick={() => logout()}>Déconnexion</button>
         </header>
 
