@@ -2,10 +2,18 @@ import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
 import { Pool } from 'pg'
+import { startPrusaLinkScheduler, syncPrinter } from './prusalink.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3000)
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+
+const printerSelect = `
+  SELECT id, name, model, status, current_job, progress, color, last_seen_at, prusalink_url,
+         prusalink_enabled, nozzle_temperature, nozzle_target_temperature, bed_temperature,
+         bed_target_temperature, firmware_version, prusalink_version, last_sync_at, last_sync_error
+  FROM printers
+`
 
 app.use(cors())
 app.use(express.json())
@@ -16,6 +24,32 @@ function requirePool(response: express.Response): Pool | null {
     return null
   }
   return pool
+}
+
+function trimmedText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function nullableText(value: unknown) {
+  return typeof value === 'string' ? value.trim() || null : null
+}
+
+function isHexColor(value: string) {
+  return /^#[0-9a-f]{6}$/i.test(value)
+}
+
+function isValidUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+async function loadPrinter(database: Pool, id: string) {
+  const result = await database.query(`${printerSelect} WHERE id = $1`, [id])
+  return result.rows[0] ?? null
 }
 
 app.get('/health', async (_request, response) => {
@@ -33,20 +67,159 @@ app.get('/health', async (_request, response) => {
 })
 
 app.get('/api/printers', async (_request, response) => {
-  if (!pool) {
-    response.status(503).json({ error: 'DATABASE_URL is not configured' })
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    const result = await database.query(`${printerSelect} ORDER BY created_at`)
+    response.json(result.rows)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load printers' })
+  }
+})
+
+app.post('/api/printers', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled } = request.body as Record<string, unknown>
+  const normalizedName = trimmedText(name)
+  const normalizedModel = trimmedText(model)
+  const normalizedColor = trimmedText(color) || '#f27852'
+  const normalizedUrl = nullableText(prusalinkUrl)
+  const normalizedApiKey = nullableText(prusalinkApiKey)
+  const enabled = typeof prusalinkEnabled === 'boolean' ? prusalinkEnabled : false
+
+  if (!normalizedName || !normalizedModel || !isHexColor(normalizedColor)) {
+    response.status(400).json({ error: 'Invalid printer data' })
+    return
+  }
+
+  if ((normalizedUrl && !isValidUrl(normalizedUrl)) || (enabled && (!normalizedUrl || !normalizedApiKey))) {
+    response.status(400).json({ error: 'Invalid PrusaLink configuration' })
     return
   }
 
   try {
-    const result = await pool.query(`
-      SELECT id, name, model, status, current_job, progress, color, last_seen_at
-      FROM printers
-      ORDER BY created_at
-    `)
+    const result = await database.query(
+      `INSERT INTO printers (name, model, color, prusalink_url, prusalink_api_key, prusalink_enabled)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [normalizedName, normalizedModel, normalizedColor, normalizedUrl, normalizedApiKey, enabled],
+    )
+    response.status(201).json(await loadPrinter(database, result.rows[0].id))
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to create printer' })
+  }
+})
+
+app.patch('/api/printers/:id', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled } = request.body as Record<string, unknown>
+
+  if ((name !== undefined && !trimmedText(name)) ||
+      (model !== undefined && !trimmedText(model)) ||
+      (color !== undefined && (!trimmedText(color) || !isHexColor(trimmedText(color)))) ||
+      (prusalinkUrl !== undefined && typeof prusalinkUrl !== 'string') ||
+      (prusalinkApiKey !== undefined && typeof prusalinkApiKey !== 'string') ||
+      (prusalinkEnabled !== undefined && typeof prusalinkEnabled !== 'boolean')) {
+    response.status(400).json({ error: 'Invalid printer update' })
+    return
+  }
+
+  const current = await database.query(
+    `SELECT prusalink_url, prusalink_api_key, prusalink_enabled
+     FROM printers
+     WHERE id = $1`,
+    [request.params.id],
+  )
+  if (current.rowCount === 0) {
+    response.status(404).json({ error: 'Printer not found' })
+    return
+  }
+
+  const nextUrl = prusalinkUrl === undefined ? current.rows[0].prusalink_url : nullableText(prusalinkUrl)
+  const nextApiKey = prusalinkApiKey === undefined ? current.rows[0].prusalink_api_key : nullableText(prusalinkApiKey)
+  const nextEnabled = prusalinkEnabled === undefined ? current.rows[0].prusalink_enabled : prusalinkEnabled
+
+  if ((nextUrl && !isValidUrl(nextUrl)) || (nextEnabled && (!nextUrl || !nextApiKey))) {
+    response.status(400).json({ error: 'Invalid PrusaLink configuration' })
+    return
+  }
+
+  try {
+    const result = await database.query(
+      `UPDATE printers
+       SET name = COALESCE($1, name),
+           model = COALESCE($2, model),
+           color = COALESCE($3, color),
+           prusalink_url = $4,
+           prusalink_api_key = $5,
+           prusalink_enabled = $6
+       WHERE id = $7
+       RETURNING id`,
+      [
+        name === undefined ? null : trimmedText(name),
+        model === undefined ? null : trimmedText(model),
+        color === undefined ? null : trimmedText(color),
+        nextUrl,
+        nextApiKey,
+        nextEnabled,
+        request.params.id,
+      ],
+    )
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: 'Printer not found' })
+      return
+    }
+    response.json(await loadPrinter(database, request.params.id))
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to update printer' })
+  }
+})
+
+app.post('/api/printers/:id/sync', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    const printerResult = await database.query(
+      `SELECT id, prusalink_url, prusalink_api_key
+       FROM printers
+       WHERE id = $1 AND prusalink_enabled = true`,
+      [request.params.id],
+    )
+
+    if (printerResult.rowCount === 0) {
+      response.status(404).json({ error: 'Enabled printer not found' })
+      return
+    }
+
+    await syncPrinter(database, printerResult.rows[0])
+    response.json(await loadPrinter(database, request.params.id))
+  } catch (error) {
+    response.status(502).json({ error: error instanceof Error ? error.message : 'Unable to sync printer' })
+  }
+})
+
+app.get('/api/printers/:id/jobs', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    const result = await database.query(
+      `SELECT id, name, status, filament_grams, started_at, completed_at, source, external_job_path
+       FROM print_jobs
+       WHERE printer_id = $1
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [request.params.id],
+    )
     response.json(result.rows)
   } catch (error) {
-    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load printers' })
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load printer jobs' })
   }
 })
 
@@ -113,7 +286,7 @@ app.patch('/api/spools/:id', async (request, response) => {
            qr_url = COALESCE($3, qr_url),
            prusament_id = COALESCE($4, prusament_id)
        WHERE id = $5 AND archived_at IS NULL
-      RETURNING id, brand, material, color, remaining_grams, initial_grams, location, qr_url, prusament_id`,
+       RETURNING id, brand, material, color, remaining_grams, initial_grams, location, qr_url, prusament_id`,
       [remainingGrams ?? null, location === undefined ? null : location.trim(),
         qrUrl === undefined ? null : qrUrl.trim(), prusamentId === undefined ? null : prusamentId.trim(), request.params.id],
     )
@@ -144,6 +317,10 @@ app.delete('/api/spools/:id', async (request, response) => {
     response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to archive spool' })
   }
 })
+
+if (pool) {
+  startPrusaLinkScheduler(pool)
+}
 
 app.listen(port, () => {
   console.log(`Print Tracker API listening on port ${port}`)

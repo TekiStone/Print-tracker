@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { listPrinters, listSpools, type Printer, type PrinterStatus, type Spool } from './api'
+import { PrintersPage } from './PrintersPage'
 import { SpoolsPage } from './SpoolsPage'
 
 const statusLabel: Record<PrinterStatus, string> = {
@@ -106,14 +107,16 @@ export function App() {
     () => printers.filter((printer) => printer.status === 'ready' || printer.status === 'printing').length,
     [printers],
   )
+  const printersWithSyncError = useMemo(() => printers.filter((printer) => printer.lastSyncError).length, [printers])
   const lowSpools = useMemo(() => spools.filter((spool) => spoolPercentage(spool) < 20).length, [spools])
   const connectionMessage = useMemo(() => {
     if (loadError) return 'Connexion API indisponible'
     if (isLoading) return 'Chargement des équipements...'
+    if (printersWithSyncError > 0) return `${printersWithSyncError} synchro${printersWithSyncError > 1 ? 's' : ''} PrusaLink en erreur`
     if (printers.length === 0) return 'Aucune imprimante configurée'
     if (activePrinters === printers.length) return 'Toutes les imprimantes remontent des données'
     return `${activePrinters} imprimante${activePrinters > 1 ? 's' : ''} active${activePrinters > 1 ? 's' : ''} sur ${printers.length}`
-  }, [activePrinters, isLoading, loadError, printers.length])
+  }, [activePrinters, isLoading, loadError, printers.length, printersWithSyncError])
 
   return (
     <div className="app-shell">
@@ -139,7 +142,7 @@ export function App() {
           <button type="button" className="notification" aria-label="Notifications">♧<i /></button>
         </header>
 
-        {activeNav === 'Bobines' ? <SpoolsPage /> : <div className="content">
+        {activeNav === 'Imprimantes' ? <PrintersPage /> : activeNav === 'Bobines' ? <SpoolsPage /> : <div className="content">
           <div className="page-heading">
             <div><p className="eyebrow">{formatCurrentDate()}</p><h1>Bonjour <span>👋</span></h1><p className="subtitle">Voici l’état réel de ton atelier.</p></div>
             <button type="button" className="primary-button"><span>+</span> Ajouter</button>
@@ -154,7 +157,7 @@ export function App() {
           {loadError && <div className="page-message page-message--error">{loadError}</div>}
           {isLoading && <div className="page-message">Chargement du tableau de bord…</div>}
 
-          <div className="section-heading"><div><h2>Tes imprimantes</h2><p>Suivi issu de la base de données</p></div><button type="button" className="text-button">Voir tout →</button></div>
+          <div className="section-heading"><div><h2>Tes imprimantes</h2><p>Suivi issu de PrusaLink et de la base de données</p></div><button type="button" className="text-button" onClick={() => setActiveNav('Imprimantes')}>Voir tout →</button></div>
           <section className="printer-grid">
             {!isLoading && printers.length === 0
               ? <div className="empty-panel">Aucune imprimante n’est encore enregistrée.</div>
@@ -163,7 +166,7 @@ export function App() {
 
           <div className="lower-grid">
             <section className="panel">
-              <div className="section-heading"><div><h2>Stock de bobines</h2><p>Les dernières bobines enregistrées</p></div><button type="button" className="text-button">Gérer le stock →</button></div>
+              <div className="section-heading"><div><h2>Stock de bobines</h2><p>Les dernières bobines enregistrées</p></div><button type="button" className="text-button" onClick={() => setActiveNav('Bobines')}>Gérer le stock →</button></div>
               <div className="spool-list">
                 {!isLoading && spools.length === 0
                   ? <div className="empty-panel empty-panel--compact">Aucune bobine en stock.</div>

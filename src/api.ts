@@ -1,4 +1,5 @@
 export type PrinterStatus = 'printing' | 'ready' | 'offline' | 'error'
+export type PrintJobStatus = 'queued' | 'printing' | 'completed' | 'failed' | 'cancelled'
 
 type ApiPrinter = {
   id: string
@@ -9,6 +10,16 @@ type ApiPrinter = {
   progress: number | null
   color: string
   last_seen_at: string | null
+  prusalink_url: string | null
+  prusalink_enabled: boolean
+  nozzle_temperature: number | null
+  nozzle_target_temperature: number | null
+  bed_temperature: number | null
+  bed_target_temperature: number | null
+  firmware_version: string | null
+  prusalink_version: string | null
+  last_sync_at: string | null
+  last_sync_error: string | null
 }
 
 type ApiSpool = {
@@ -23,6 +34,17 @@ type ApiSpool = {
   prusament_id: string | null
 }
 
+type ApiPrintJob = {
+  id: string
+  name: string
+  status: PrintJobStatus
+  filament_grams: number | null
+  started_at: string | null
+  completed_at: string | null
+  source: 'manual' | 'prusalink'
+  external_job_path: string | null
+}
+
 export type Printer = {
   id: string
   name: string
@@ -32,6 +54,16 @@ export type Printer = {
   progress?: number
   color: string
   lastSeenAt?: string
+  prusalinkUrl?: string
+  prusalinkEnabled: boolean
+  nozzleTemperature?: number
+  nozzleTargetTemperature?: number
+  bedTemperature?: number
+  bedTargetTemperature?: number
+  firmwareVersion?: string
+  prusalinkVersion?: string
+  lastSyncAt?: string
+  lastSyncError?: string
 }
 
 export type Spool = {
@@ -57,6 +89,26 @@ export type SpoolPayload = {
   prusamentId?: string
 }
 
+export type PrinterPayload = {
+  name: string
+  model: string
+  color: string
+  prusalinkUrl?: string
+  prusalinkApiKey?: string
+  prusalinkEnabled: boolean
+}
+
+export type PrintJob = {
+  id: string
+  name: string
+  status: PrintJobStatus
+  filamentGrams?: number
+  startedAt?: string
+  completedAt?: string
+  source: 'manual' | 'prusalink'
+  externalJobPath?: string
+}
+
 function mapPrinter(printer: ApiPrinter): Printer {
   return {
     id: printer.id,
@@ -67,6 +119,16 @@ function mapPrinter(printer: ApiPrinter): Printer {
     progress: printer.progress ?? undefined,
     color: printer.color,
     lastSeenAt: printer.last_seen_at ?? undefined,
+    prusalinkUrl: printer.prusalink_url ?? undefined,
+    prusalinkEnabled: printer.prusalink_enabled,
+    nozzleTemperature: printer.nozzle_temperature ?? undefined,
+    nozzleTargetTemperature: printer.nozzle_target_temperature ?? undefined,
+    bedTemperature: printer.bed_temperature ?? undefined,
+    bedTargetTemperature: printer.bed_target_temperature ?? undefined,
+    firmwareVersion: printer.firmware_version ?? undefined,
+    prusalinkVersion: printer.prusalink_version ?? undefined,
+    lastSyncAt: printer.last_sync_at ?? undefined,
+    lastSyncError: printer.last_sync_error ?? undefined,
   }
 }
 
@@ -81,6 +143,19 @@ function mapSpool(spool: ApiSpool): Spool {
     location: spool.location ?? '',
     qrUrl: spool.qr_url ?? undefined,
     prusamentId: spool.prusament_id ?? undefined,
+  }
+}
+
+function mapPrintJob(job: ApiPrintJob): PrintJob {
+  return {
+    id: job.id,
+    name: job.name,
+    status: job.status,
+    filamentGrams: job.filament_grams ?? undefined,
+    startedAt: job.started_at ?? undefined,
+    completedAt: job.completed_at ?? undefined,
+    source: job.source,
+    externalJobPath: job.external_job_path ?? undefined,
   }
 }
 
@@ -114,6 +189,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function listPrinters() {
   const printers = await request<ApiPrinter[]>('/api/printers')
   return printers.map(mapPrinter)
+}
+
+export async function createPrinter(payload: PrinterPayload) {
+  const printer = await request<ApiPrinter>('/api/printers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return mapPrinter(printer)
+}
+
+export async function updatePrinter(id: string, payload: Partial<PrinterPayload>) {
+  const printer = await request<ApiPrinter>(`/api/printers/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  return mapPrinter(printer)
+}
+
+export async function syncPrinterNow(id: string) {
+  const printer = await request<ApiPrinter>(`/api/printers/${id}/sync`, {
+    method: 'POST',
+  })
+  return mapPrinter(printer)
+}
+
+export async function listPrinterJobs(id: string) {
+  const jobs = await request<ApiPrintJob[]>(`/api/printers/${id}/jobs`)
+  return jobs.map(mapPrintJob)
 }
 
 export async function listSpools() {
