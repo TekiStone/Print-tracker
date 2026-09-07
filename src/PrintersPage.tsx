@@ -88,7 +88,7 @@ export function PrintersPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!form.name.trim() || !form.model.trim() || (form.status === 'printing' && (!form.currentJob?.trim() || form.progress === null || form.progress < 0 || form.progress > 100))) return
+    if (!form.name.trim() || !form.model.trim() || (form.status === 'printing' && (!form.currentJob?.trim() || form.progress == null || form.progress < 0 || form.progress > 100))) return
     const normalized = { ...form, name: form.name.trim(), model: form.model.trim(), currentJob: form.status === 'printing' ? form.currentJob?.trim() : null, progress: form.status === 'printing' ? form.progress : null }
     update(editingId
       ? printers.map((printer) => printer.id === editingId ? { ...printer, ...normalized } : printer)
