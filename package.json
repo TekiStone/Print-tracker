@@ -17,6 +17,7 @@
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
+    "csrf-sync": "^4.2.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.0",

@@ -1,3 +1,5 @@
+import { getCsrfToken } from './csrf'
+
 export type PrinterStatus = 'printing' | 'ready' | 'offline' | 'error'
 export type PrintJobStatus = 'queued' | 'printing' | 'completed' | 'failed' | 'cancelled'
 
@@ -189,13 +191,19 @@ function mapPrintJob(job: ApiPrintJob): PrintJob {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method?.toUpperCase() ?? 'GET'
+  const headers = new Headers(init?.headers)
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && !headers.has('x-csrf-token')) {
+    headers.set('x-csrf-token', await getCsrfToken())
+  }
+
   const response = await fetch(path, {
     credentials: 'include',
+    ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...init?.headers,
+      ...Object.fromEntries(headers.entries()),
     },
-    ...init,
   })
 
   if (!response.ok) {

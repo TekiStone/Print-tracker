@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import bcrypt from 'bcryptjs'
 import connectPgSimple from 'connect-pg-simple'
 import cors from 'cors'
+import { csrfSync } from 'csrf-sync'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
 import session from 'express-session'
@@ -22,6 +23,7 @@ let pool: Pool | null = process.env.DATABASE_URL ? new Pool({ connectionString: 
 const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:5173'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const frontendDirectory = path.join(projectRoot, 'dist')
+const { generateToken, csrfSynchronisedProtection } = csrfSync()
 
 const printerSelect = `
   SELECT printers.id, printers.name, printers.model, printers.status, printers.current_job, printers.progress, printers.color, printers.last_seen_at, printers.prusalink_url,
@@ -64,7 +66,11 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 7,
   },
 }))
+app.get('/api/auth/csrf-token', (request, response) => {
+  response.json({ token: generateToken(request) })
+})
 app.use('/api', requireTrustedOrigin)
+app.use('/api', csrfSynchronisedProtection)
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
