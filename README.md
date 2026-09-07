@@ -110,7 +110,7 @@ Le timer ne redéploie que si `origin/master` a changé. En cas d'échec du lint
 
 ### Publication avec Caddy
 
-Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) servent les deux builds et transmettent `/api` aux bons ports. Remplace les domaines, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
+Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) transmettent chaque domaine au service Node correspondant. Le service Node sert à la fois le build React et `/api`. Remplace les domaines et l'adresse IP du LXC, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
 
 ```bash
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile

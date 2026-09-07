@@ -2,10 +2,15 @@ import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
 import { Pool } from 'pg'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3000)
+const host = process.env.HOST ?? '0.0.0.0'
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const frontendDirectory = path.join(projectRoot, 'dist')
 
 app.use(cors())
 app.use(express.json())
@@ -145,6 +150,11 @@ app.delete('/api/spools/:id', async (request, response) => {
   }
 })
 
-app.listen(port, () => {
-  console.log(`Print Tracker API listening on port ${port}`)
+app.use(express.static(frontendDirectory))
+app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_request, response) => {
+  response.sendFile(path.join(frontendDirectory, 'index.html'))
+})
+
+app.listen(port, host, () => {
+  console.log(`Print Tracker listening on http://${host}:${port}`)
 })
