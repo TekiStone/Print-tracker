@@ -41,6 +41,8 @@ cp .env.example .env
 npm run server
 ```
 
+En développement, lance les deux commandes dans deux terminaux. Ouvre ensuite l'adresse Vite affichée (généralement `http://localhost:5173`) : elle relaie automatiquement `/auth`, `/api` et `/health` vers l'API sur le port 3000.
+
 L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
 
 ### Authentification locale et OIDC / Authentik
