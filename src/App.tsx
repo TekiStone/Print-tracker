@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { SpoolsPage } from './SpoolsPage'
-import { PrintersPage } from './PrintersPage'
 
 type PrinterStatus = 'printing' | 'ready' | 'offline'
 
@@ -99,7 +98,7 @@ export function App() {
           <button type="button" className="notification" aria-label="Notifications">♧<i /></button>
         </header>
 
-        {activeNav === 'Bobines' ? <SpoolsPage /> : activeNav === 'Imprimantes' ? <PrintersPage /> : <div className="content">
+        {activeNav === 'Bobines' ? <SpoolsPage /> : <div className="content">
           <div className="page-heading">
             <div><p className="eyebrow">LUNDI 7 SEPTEMBRE 2026</p><h1>Bonjour Thomas <span>👋</span></h1><p className="subtitle">Voici l’état de ton atelier aujourd’hui.</p></div>
             <button type="button" className="primary-button"><span>+</span> Ajouter</button>
