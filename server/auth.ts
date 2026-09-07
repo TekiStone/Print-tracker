@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { promisify } from 'node:util'
 import type { NextFunction, Request, Response } from 'express'
 import session from 'express-session'
 
@@ -28,6 +29,7 @@ type OidcConfiguration = {
   userinfoEndpoint: string
 }
 
+const scrypt = promisify(crypto.scrypt)
 const oidc: OidcConfiguration | null = process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID &&
   process.env.OIDC_CLIENT_SECRET && process.env.OIDC_REDIRECT_URI
   ? {
@@ -73,6 +75,21 @@ function createPkce() {
 
 export function authConfigured() {
   return oidc !== null
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16)
+  const derivedKey = await scrypt(password, salt, 64) as Buffer
+  return `scrypt:${salt.toString('base64url')}:${derivedKey.toString('base64url')}`
+}
+
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [, saltValue, hashValue] = storedHash.split(':')
+  if (!saltValue || !hashValue) return false
+  const salt = Buffer.from(saltValue, 'base64url')
+  const expected = Buffer.from(hashValue, 'base64url')
+  const actual = await scrypt(password, salt, expected.length) as Buffer
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected)
 }
 
 export function sessionMiddleware() {
@@ -135,7 +152,9 @@ export async function completeLogin(request: Request, response: Response): Promi
     response.status(502).send('OIDC response did not contain an access token')
     return null
   }
-  const userResponse = await fetch(configuration.userinfoEndpoint, { headers: { authorization: `Bearer ${tokens.access_token}` } })
+  const userResponse = await fetch(configuration.userinfoEndpoint, {
+    headers: { authorization: `Bearer ${tokens.access_token}` },
+  })
   if (!userResponse.ok) {
     response.status(502).send('OIDC userinfo request failed')
     return null
@@ -159,8 +178,8 @@ export async function completeLogin(request: Request, response: Response): Promi
   return user
 }
 
-export function requireAuth(request: Request, response: Response, next: NextFunction) {
-  if (!authConfigured() || request.session.user) {
+export function requireAuth(request: Request, response: Response, next: NextFunction, enabled = authConfigured()) {
+  if (!enabled || request.session.user) {
     next()
     return
   }
