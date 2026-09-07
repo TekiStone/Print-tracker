@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import cors from 'cors'
 import express from 'express'
+import rateLimit from 'express-rate-limit'
 import { Pool } from 'pg'
 import { startPrusaLinkScheduler, syncPrinter } from './prusalink.js'
 
@@ -17,6 +18,13 @@ const printerSelect = `
 
 app.use(cors())
 app.use(express.json())
+app.use('/api', rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many API requests, please retry in a moment' },
+}))
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
