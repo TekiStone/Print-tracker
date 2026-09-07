@@ -12,8 +12,9 @@ Le dépôt contient un dashboard React/Vite responsive et un backend Express/Pos
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - actions rapides et statistiques d'atelier
 - API `/health`, configuration/synchronisation des imprimantes via `/api/printers` et CRUD `/api/spools`
-- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur et historique des impressions
-- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `server/migrations/002_add_prusament_qr.sql` et `server/migrations/003_add_prusalink_sync.sql`
+- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur, historique des impressions et liaison à une bobine active
+- décrément automatique du stock de la bobine assignée à la fin d’une impression PrusaLink à partir des métadonnées G-code
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `server/migrations/002_add_prusament_qr.sql`, `server/migrations/003_add_prusalink_sync.sql` et `server/migrations/004_link_prusalink_spools.sql`
 
 ## Démarrage
 
@@ -36,6 +37,7 @@ Pour PrusaLink, configure aussi :
 - `PRUSALINK_REQUEST_TIMEOUT_MS` : timeout HTTP pour joindre une imprimante PrusaLink
 
 Les clés API PrusaLink sont stockées côté backend et ne sont jamais renvoyées au frontend.
+Pour imputer automatiquement la consommation de filament, assigne une bobine active à chaque imprimante depuis l’écran Imprimantes.
 
 ## Déploiement V0 sur un LXC Debian
 
@@ -84,6 +86,7 @@ set +a
 psql "$DATABASE_URL" -f server/migrations/001_initial.sql
 psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
 psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
+psql "$DATABASE_URL" -f server/migrations/004_link_prusalink_spools.sql
 ```
 
 Active les services :

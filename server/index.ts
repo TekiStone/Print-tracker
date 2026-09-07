@@ -10,10 +10,13 @@ const port = Number(process.env.PORT ?? 3000)
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
 
 const printerSelect = `
-  SELECT id, name, model, status, current_job, progress, color, last_seen_at, prusalink_url,
-         prusalink_enabled, nozzle_temperature, nozzle_target_temperature, bed_temperature,
-         bed_target_temperature, firmware_version, prusalink_version, last_sync_at, last_sync_error
+  SELECT printers.id, printers.name, printers.model, printers.status, printers.current_job, printers.progress, printers.color, printers.last_seen_at, printers.prusalink_url,
+         printers.prusalink_enabled, printers.nozzle_temperature, printers.nozzle_target_temperature, printers.bed_temperature,
+         printers.bed_target_temperature, printers.firmware_version, printers.prusalink_version, printers.last_sync_at, printers.last_sync_error,
+         printers.active_spool_id, printers.active_spool_assigned_at,
+         spools.brand AS active_spool_brand, spools.material AS active_spool_material, spools.color AS active_spool_color
   FROM printers
+  LEFT JOIN spools ON spools.id = printers.active_spool_id AND spools.archived_at IS NULL
 `
 
 app.use(cors())
@@ -56,7 +59,7 @@ function isValidUrl(value: string) {
 }
 
 async function loadPrinter(database: Pool, id: string) {
-  const result = await database.query(`${printerSelect} WHERE id = $1`, [id])
+  const result = await database.query(`${printerSelect} WHERE printers.id = $1`, [id])
   return result.rows[0] ?? null
 }
 
@@ -79,7 +82,7 @@ app.get('/api/printers', async (_request, response) => {
   if (!database) return
 
   try {
-    const result = await database.query(`${printerSelect} ORDER BY created_at`)
+    const result = await database.query(`${printerSelect} ORDER BY printers.created_at`)
     response.json(result.rows)
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load printers' })
@@ -90,13 +93,14 @@ app.post('/api/printers', async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
-  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled } = request.body as Record<string, unknown>
+  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled, activeSpoolId } = request.body as Record<string, unknown>
   const normalizedName = trimmedText(name)
   const normalizedModel = trimmedText(model)
   const normalizedColor = trimmedText(color) || '#f27852'
   const normalizedUrl = nullableText(prusalinkUrl)
   const normalizedApiKey = nullableText(prusalinkApiKey)
   const enabled = typeof prusalinkEnabled === 'boolean' ? prusalinkEnabled : false
+  const normalizedActiveSpoolId = nullableText(activeSpoolId)
 
   if (!normalizedName || !normalizedModel || !isHexColor(normalizedColor)) {
     response.status(400).json({ error: 'Invalid printer data' })
@@ -109,11 +113,19 @@ app.post('/api/printers', async (request, response) => {
   }
 
   try {
+    if (normalizedActiveSpoolId) {
+      const spoolResult = await database.query(`SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL`, [normalizedActiveSpoolId])
+      if (spoolResult.rowCount === 0) {
+        response.status(400).json({ error: 'Invalid active spool' })
+        return
+      }
+    }
+
     const result = await database.query(
-      `INSERT INTO printers (name, model, color, prusalink_url, prusalink_api_key, prusalink_enabled)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO printers (name, model, color, prusalink_url, prusalink_api_key, prusalink_enabled, active_spool_id, active_spool_assigned_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 IS NULL THEN NULL ELSE now() END)
        RETURNING id`,
-      [normalizedName, normalizedModel, normalizedColor, normalizedUrl, normalizedApiKey, enabled],
+      [normalizedName, normalizedModel, normalizedColor, normalizedUrl, normalizedApiKey, enabled, normalizedActiveSpoolId],
     )
     response.status(201).json(await loadPrinter(database, result.rows[0].id))
   } catch (error) {
@@ -125,14 +137,15 @@ app.patch('/api/printers/:id', async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
-  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled } = request.body as Record<string, unknown>
+  const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled, activeSpoolId } = request.body as Record<string, unknown>
 
   if ((name !== undefined && !trimmedText(name)) ||
       (model !== undefined && !trimmedText(model)) ||
       (color !== undefined && (!trimmedText(color) || !isHexColor(trimmedText(color)))) ||
       (prusalinkUrl !== undefined && typeof prusalinkUrl !== 'string') ||
       (prusalinkApiKey !== undefined && typeof prusalinkApiKey !== 'string') ||
-      (prusalinkEnabled !== undefined && typeof prusalinkEnabled !== 'boolean')) {
+      (prusalinkEnabled !== undefined && typeof prusalinkEnabled !== 'boolean') ||
+      (activeSpoolId !== undefined && activeSpoolId !== null && typeof activeSpoolId !== 'string')) {
     response.status(400).json({ error: 'Invalid printer update' })
     return
   }
@@ -157,6 +170,15 @@ app.patch('/api/printers/:id', async (request, response) => {
     return
   }
 
+  const nextActiveSpoolId = activeSpoolId === undefined ? undefined : nullableText(activeSpoolId)
+  if (nextActiveSpoolId) {
+    const spoolResult = await database.query(`SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL`, [nextActiveSpoolId])
+    if (spoolResult.rowCount === 0) {
+      response.status(400).json({ error: 'Invalid active spool' })
+      return
+    }
+  }
+
   try {
     const result = await database.query(
       `UPDATE printers
@@ -165,8 +187,15 @@ app.patch('/api/printers/:id', async (request, response) => {
            color = COALESCE($3, color),
            prusalink_url = $4,
            prusalink_api_key = $5,
-           prusalink_enabled = $6
-       WHERE id = $7
+           prusalink_enabled = $6,
+           active_spool_id = CASE WHEN $8 THEN $7 ELSE active_spool_id END,
+           active_spool_assigned_at = CASE
+             WHEN $8 = false THEN active_spool_assigned_at
+             WHEN $7 IS NULL THEN NULL
+             WHEN $7 IS DISTINCT FROM active_spool_id THEN now()
+             ELSE active_spool_assigned_at
+           END
+       WHERE id = $9
        RETURNING id`,
       [
         name === undefined ? null : trimmedText(name),
@@ -175,6 +204,8 @@ app.patch('/api/printers/:id', async (request, response) => {
         nextUrl,
         nextApiKey,
         nextEnabled,
+        nextActiveSpoolId ?? null,
+        activeSpoolId !== undefined,
         request.params.id,
       ],
     )
@@ -194,7 +225,7 @@ app.post('/api/printers/:id/sync', async (request, response) => {
 
   try {
     const printerResult = await database.query(
-      `SELECT id, prusalink_url, prusalink_api_key
+      `SELECT id, prusalink_url, prusalink_api_key, active_spool_id
        FROM printers
        WHERE id = $1 AND prusalink_enabled = true`,
       [request.params.id],
@@ -218,10 +249,12 @@ app.get('/api/printers/:id/jobs', async (request, response) => {
 
   try {
     const result = await database.query(
-      `SELECT id, name, status, filament_grams, started_at, completed_at, source, external_job_path
+      `SELECT print_jobs.id, print_jobs.name, print_jobs.status, print_jobs.filament_grams, print_jobs.started_at, print_jobs.completed_at, print_jobs.source, print_jobs.external_job_path,
+              print_jobs.estimated_filament_grams, print_jobs.spool_id, spools.brand AS spool_brand, spools.material AS spool_material, spools.color AS spool_color
        FROM print_jobs
-       WHERE printer_id = $1
-       ORDER BY created_at DESC
+       LEFT JOIN spools ON spools.id = print_jobs.spool_id
+       WHERE print_jobs.printer_id = $1
+       ORDER BY print_jobs.created_at DESC
        LIMIT 10`,
       [request.params.id],
     )

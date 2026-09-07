@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createPrinter, listPrinterJobs, listPrinters, syncPrinterNow, updatePrinter, type PrintJob, type Printer, type PrinterPayload } from './api'
+import { createPrinter, listPrinterJobs, listPrinters, listSpools, syncPrinterNow, updatePrinter, type PrintJob, type Printer, type PrinterPayload, type Spool } from './api'
 
 type FormState = PrinterPayload & { prusalinkApiKey: string }
 
@@ -10,6 +10,7 @@ const emptyForm: FormState = {
   prusalinkUrl: '',
   prusalinkApiKey: '',
   prusalinkEnabled: false,
+  activeSpoolId: null,
 }
 
 const statusLabel = {
@@ -40,6 +41,7 @@ function formatTemperature(actual?: number, target?: number) {
 
 export function PrintersPage() {
   const [printers, setPrinters] = useState<Printer[]>([])
+  const [spools, setSpools] = useState<Spool[]>([])
   const [jobsByPrinter, setJobsByPrinter] = useState<Record<string, PrintJob[]>>({})
   const [loadingJobsFor, setLoadingJobsFor] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -58,7 +60,9 @@ export function PrintersPage() {
     setIsLoading(true)
     setLoadError('')
     try {
-      setPrinters(await listPrinters())
+      const [printersData, spoolsData] = await Promise.all([listPrinters(), listSpools()])
+      setPrinters(printersData)
+      setSpools(spoolsData)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Impossible de charger les imprimantes')
     } finally {
@@ -81,6 +85,7 @@ export function PrintersPage() {
       prusalinkUrl: printer.prusalinkUrl ?? '',
       prusalinkApiKey: '',
       prusalinkEnabled: printer.prusalinkEnabled,
+      activeSpoolId: printer.activeSpoolId ?? null,
     })
     setIsFormOpen(true)
   }
@@ -99,6 +104,7 @@ export function PrintersPage() {
         color: form.color.trim(),
         prusalinkUrl: form.prusalinkUrl?.trim() || undefined,
         prusalinkEnabled: form.prusalinkEnabled,
+        activeSpoolId: form.activeSpoolId ?? null,
       }
 
       if (form.prusalinkApiKey.trim()) payload.prusalinkApiKey = form.prusalinkApiKey.trim()
@@ -173,7 +179,9 @@ export function PrintersPage() {
             <div className="managed-printer__meta">
               <span><b>PrusaLink</b>{printer.prusalinkEnabled ? 'Activé' : 'Désactivé'}</span>
               <span><b>URL</b>{printer.prusalinkUrl || 'Non configurée'}</span>
+              <span><b>Bobine active</b>{printer.activeSpoolLabel || 'Non assignée'}</span>
               <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
+              <span><b>Assignée le</b>{formatDateTime(printer.activeSpoolAssignedAt)}</span>
               <span><b>Dernière activité</b>{formatDateTime(printer.lastSeenAt)}</span>
               <span><b>Buse</b>{formatTemperature(printer.nozzleTemperature, printer.nozzleTargetTemperature)}</span>
               <span><b>Plateau</b>{formatTemperature(printer.bedTemperature, printer.bedTargetTemperature)}</span>
@@ -204,7 +212,7 @@ export function PrintersPage() {
                     <div className="printer-job" key={job.id}>
                       <div>
                         <strong>{job.name}</strong>
-                        <small>{job.externalJobPath || job.source}</small>
+                        <small>{job.externalJobPath || job.source}{job.estimatedFilamentGrams !== undefined ? ` · ${job.estimatedFilamentGrams} g estimés` : ''}{job.spoolLabel ? ` · ${job.spoolLabel}` : ''}</small>
                       </div>
                       <div>
                         <span>{jobStatusLabel[job.status]}</span>
@@ -232,6 +240,7 @@ export function PrintersPage() {
             </div>
             <label>URL PrusaLink<input value={form.prusalinkUrl} onChange={(event) => setForm({ ...form, prusalinkUrl: event.target.value })} placeholder="http://192.168.1.42" /></label>
             <label>Clé API PrusaLink<input type="password" value={form.prusalinkApiKey} onChange={(event) => setForm({ ...form, prusalinkApiKey: event.target.value })} placeholder={editingPrinter ? 'Laisser vide pour conserver la clé' : 'Clé API'} /></label>
+            <label>Bobine active<select value={form.activeSpoolId ?? ''} onChange={(event) => setForm({ ...form, activeSpoolId: event.target.value || null })}><option value="">Aucune</option>{spools.map((spool) => <option key={spool.id} value={spool.id}>{`${spool.brand} ${spool.material} · ${spool.color}`}</option>)}</select></label>
             <label className="checkbox-field"><input type="checkbox" checked={form.prusalinkEnabled} onChange={(event) => setForm({ ...form, prusalinkEnabled: event.target.checked })} />Activer la synchronisation automatique</label>
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setIsFormOpen(false)}>Annuler</button>

@@ -20,6 +20,11 @@ type ApiPrinter = {
   prusalink_version: string | null
   last_sync_at: string | null
   last_sync_error: string | null
+  active_spool_id: string | null
+  active_spool_assigned_at: string | null
+  active_spool_brand: string | null
+  active_spool_material: string | null
+  active_spool_color: string | null
 }
 
 type ApiSpool = {
@@ -43,6 +48,11 @@ type ApiPrintJob = {
   completed_at: string | null
   source: 'manual' | 'prusalink'
   external_job_path: string | null
+  estimated_filament_grams: number | null
+  spool_id: string | null
+  spool_brand: string | null
+  spool_material: string | null
+  spool_color: string | null
 }
 
 export type Printer = {
@@ -64,6 +74,10 @@ export type Printer = {
   prusalinkVersion?: string
   lastSyncAt?: string
   lastSyncError?: string
+  activeSpoolId?: string
+  activeSpoolAssignedAt?: string
+  activeSpoolLabel?: string
+  activeSpoolColor?: string
 }
 
 export type Spool = {
@@ -96,6 +110,7 @@ export type PrinterPayload = {
   prusalinkUrl?: string
   prusalinkApiKey?: string
   prusalinkEnabled: boolean
+  activeSpoolId?: string | null
 }
 
 export type PrintJob = {
@@ -107,6 +122,10 @@ export type PrintJob = {
   completedAt?: string
   source: 'manual' | 'prusalink'
   externalJobPath?: string
+  estimatedFilamentGrams?: number
+  spoolId?: string
+  spoolLabel?: string
+  spoolColor?: string
 }
 
 function mapPrinter(printer: ApiPrinter): Printer {
@@ -129,6 +148,12 @@ function mapPrinter(printer: ApiPrinter): Printer {
     prusalinkVersion: printer.prusalink_version ?? undefined,
     lastSyncAt: printer.last_sync_at ?? undefined,
     lastSyncError: printer.last_sync_error ?? undefined,
+    activeSpoolId: printer.active_spool_id ?? undefined,
+    activeSpoolAssignedAt: printer.active_spool_assigned_at ?? undefined,
+    activeSpoolLabel: printer.active_spool_brand
+      ? `${printer.active_spool_brand} ${printer.active_spool_material ?? ''}`.trim()
+      : undefined,
+    activeSpoolColor: printer.active_spool_color ?? undefined,
   }
 }
 
@@ -156,6 +181,10 @@ function mapPrintJob(job: ApiPrintJob): PrintJob {
     completedAt: job.completed_at ?? undefined,
     source: job.source,
     externalJobPath: job.external_job_path ?? undefined,
+    estimatedFilamentGrams: job.estimated_filament_grams ?? undefined,
+    spoolId: job.spool_id ?? undefined,
+    spoolLabel: job.spool_brand ? `${job.spool_brand} ${job.spool_material ?? ''}`.trim() : undefined,
+    spoolColor: job.spool_color ?? undefined,
   }
 }
 

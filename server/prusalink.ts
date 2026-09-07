@@ -7,6 +7,7 @@ type SyncablePrinter = {
   id: string
   prusalink_url: string | null
   prusalink_api_key: string | null
+  active_spool_id: string | null
 }
 
 type VersionResponse = {
@@ -67,6 +68,7 @@ type SyncResult = {
   firmwareVersion: string | null
   prusalinkVersion: string | null
   externalJobPath: string | null
+  estimatedFilamentGrams: number | null
   jobStatus: PrintJobStatus
 }
 
@@ -138,6 +140,7 @@ function buildSyncResult(version: VersionResponse, printer: PrinterResponse, job
     firmwareVersion: version.firmware ?? null,
     prusalinkVersion: version.server ?? null,
     externalJobPath,
+    estimatedFilamentGrams: null,
     jobStatus: determineJobStatus(status, job),
   }
 }
@@ -159,28 +162,152 @@ async function requestJson<T>(printer: SyncablePrinter, path: string): Promise<T
   return response.json() as Promise<T>
 }
 
+async function requestText(printer: SyncablePrinter, path: string): Promise<string> {
+  const signal = AbortSignal.timeout(requestTimeoutMs)
+  const response = await fetch(`${normalizeBaseUrl(printer.prusalink_url ?? '')}${path}`, {
+    headers: {
+      Accept: 'text/plain, application/octet-stream;q=0.9, */*;q=0.8',
+      'X-Api-Key': printer.prusalink_api_key ?? '',
+    },
+    signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`PrusaLink ${response.status} sur ${path}`)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) return response.text()
+
+  const decoder = new TextDecoder()
+  let content = ''
+  let bytes = 0
+
+  while (bytes < 128_000) {
+    const { done, value } = await reader.read()
+    if (done || !value) break
+    bytes += value.byteLength
+    content += decoder.decode(value, { stream: true })
+    if (content.includes('\n; END') || content.length >= 128_000) break
+  }
+
+  content += decoder.decode()
+  reader.releaseLock()
+  return content
+}
+
+function parseEstimatedFilament(header: string) {
+  const line = header.match(/^;\s*filament used \[g\]\s*=\s*(.+)$/im)
+  if (!line?.[1]) return null
+
+  const values = Array.from(line[1].matchAll(/(\d+(?:[.,]\d+)?)/g), (match) => Number(match[1].replace(',', '.')))
+    .filter((value) => Number.isFinite(value))
+
+  if (values.length === 0) return null
+  return Math.max(0, Math.round(values.reduce((total, value) => total + value, 0)))
+}
+
+function buildFileCandidates(path: string) {
+  const normalized = path.replace(/^\/+/, '')
+  if (!normalized) return []
+
+  const candidates = [{ target: 'local', path: normalized }]
+
+  if (normalized.startsWith('sdcard/')) {
+    candidates.unshift({ target: 'sdcard', path: normalized.slice('sdcard/'.length) })
+  } else if (normalized.startsWith('local/')) {
+    candidates.unshift({ target: 'local', path: normalized.slice('local/'.length) })
+  }
+
+  return candidates.filter((candidate) => candidate.path)
+}
+
+function encodeFilePath(path: string) {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/')
+}
+
+async function estimateFilamentUsage(printer: SyncablePrinter, externalJobPath: string | null) {
+  if (!externalJobPath) return null
+
+  const candidates = buildFileCandidates(externalJobPath)
+  for (const candidate of candidates) {
+    try {
+      const raw = await requestText(printer, `/api/files/${candidate.target}/${encodeFilePath(candidate.path)}/raw`)
+      const estimated = parseEstimatedFilament(raw)
+      if (estimated !== null) return estimated
+    } catch {
+      // Try next candidate path.
+    }
+  }
+
+  return null
+}
+
+async function applyFilamentUsage(database: Pool, spoolId: string | null, estimatedFilamentGrams: number | null, jobId: string) {
+  if (!spoolId || !estimatedFilamentGrams || estimatedFilamentGrams <= 0) return
+
+  const client = await database.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `UPDATE spools
+       SET remaining_grams = GREATEST(0, remaining_grams - $1)
+       WHERE id = $2 AND archived_at IS NULL`,
+      [estimatedFilamentGrams, spoolId],
+    )
+    await client.query(
+      `UPDATE print_jobs
+       SET filament_grams = COALESCE(filament_grams, $1),
+           filament_applied_at = now()
+       WHERE id = $2`,
+      [estimatedFilamentGrams, jobId],
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 async function closeActiveJobs(database: Pool, printerId: string, nextStatus: PrintJobStatus) {
-  await database.query(
+  const result = await database.query<{ id: string, spool_id: string | null, estimated_filament_grams: number | null, filament_applied_at: string | null }>(
     `UPDATE print_jobs
      SET status = $1,
          completed_at = COALESCE(completed_at, now())
-     WHERE printer_id = $2 AND source = 'prusalink' AND completed_at IS NULL`,
+     WHERE printer_id = $2 AND source = 'prusalink' AND completed_at IS NULL
+     RETURNING id, spool_id, estimated_filament_grams, filament_applied_at`,
     [nextStatus, printerId],
   )
+
+  if (nextStatus !== 'completed') return
+
+  for (const job of result.rows) {
+    if (job.filament_applied_at) continue
+    await applyFilamentUsage(database, job.spool_id, job.estimated_filament_grams, job.id)
+  }
 }
 
-async function syncPrintJob(database: Pool, printerId: string, result: SyncResult) {
+async function syncPrintJob(database: Pool, printer: SyncablePrinter, result: SyncResult) {
   if (result.status !== 'printing' || !result.externalJobPath || !result.currentJob) {
-    await closeActiveJobs(database, printerId, result.jobStatus)
+    await closeActiveJobs(database, printer.id, result.jobStatus)
     return
   }
 
   await database.query(
-    `INSERT INTO print_jobs (printer_id, name, status, started_at, source, external_job_path)
-     VALUES ($1, $2, $3, now(), 'prusalink', $4)
+    `INSERT INTO print_jobs (printer_id, spool_id, name, status, started_at, source, external_job_path, filament_grams, estimated_filament_grams)
+     VALUES ($1, $2, $3, $4, now(), 'prusalink', $5, $6, $6)
      ON CONFLICT (printer_id, external_job_path) WHERE source = 'prusalink' AND completed_at IS NULL
-     DO UPDATE SET status = EXCLUDED.status`,
-    [printerId, result.currentJob, result.jobStatus, result.externalJobPath],
+     DO UPDATE SET status = EXCLUDED.status,
+                   spool_id = COALESCE(print_jobs.spool_id, EXCLUDED.spool_id),
+                   filament_grams = COALESCE(print_jobs.filament_grams, EXCLUDED.filament_grams),
+                   estimated_filament_grams = COALESCE(print_jobs.estimated_filament_grams, EXCLUDED.estimated_filament_grams)`,
+    [printer.id, printer.active_spool_id, result.currentJob, result.jobStatus, result.externalJobPath, result.estimatedFilamentGrams],
   )
 }
 
@@ -208,6 +335,7 @@ export async function syncPrinter(database: Pool, printer: SyncablePrinter) {
     ])
 
     const result = buildSyncResult(version, printerState, job)
+    result.estimatedFilamentGrams = await estimateFilamentUsage(printer, result.externalJobPath)
 
     await database.query(
       `UPDATE printers
@@ -238,7 +366,7 @@ export async function syncPrinter(database: Pool, printer: SyncablePrinter) {
       ],
     )
 
-    await syncPrintJob(database, printer.id, result)
+    await syncPrintJob(database, printer, result)
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Synchronisation PrusaLink impossible'
@@ -249,7 +377,7 @@ export async function syncPrinter(database: Pool, printer: SyncablePrinter) {
 
 export async function syncEnabledPrinters(database: Pool) {
   const result = await database.query<SyncablePrinter>(
-    `SELECT id, prusalink_url, prusalink_api_key
+    `SELECT id, prusalink_url, prusalink_api_key, active_spool_id
      FROM printers
      WHERE prusalink_enabled = true`,
   )
