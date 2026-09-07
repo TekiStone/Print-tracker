@@ -11,8 +11,9 @@ Le dépôt contient un dashboard React/Vite responsive et un backend Express/Pos
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait via l'API
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - actions rapides et statistiques d'atelier
-- API `/health`, `/api/printers` et CRUD `/api/spools`
-- migrations PostgreSQL dans `server/migrations/001_initial.sql` et `server/migrations/002_add_prusament_qr.sql`
+- API `/health`, configuration/synchronisation des imprimantes via `/api/printers` et CRUD `/api/spools`
+- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur et historique des impressions
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `server/migrations/002_add_prusament_qr.sql` et `server/migrations/003_add_prusalink_sync.sql`
 
 ## Démarrage
 
@@ -29,6 +30,12 @@ npm run server
 ```
 
 L'API attend une base PostgreSQL configurée par `DATABASE_URL`. Le front charge désormais les imprimantes et bobines directement depuis l'API.
+Pour PrusaLink, configure aussi :
+
+- `PRUSALINK_SYNC_INTERVAL_MS` : fréquence de synchronisation des imprimantes activées
+- `PRUSALINK_REQUEST_TIMEOUT_MS` : timeout HTTP pour joindre une imprimante PrusaLink
+
+Les clés API PrusaLink sont stockées côté backend et ne sont jamais renvoyées au frontend.
 
 ## Déploiement V0 sur un LXC Debian
 
@@ -76,6 +83,7 @@ set -a
 set +a
 psql "$DATABASE_URL" -f server/migrations/001_initial.sql
 psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
 ```
 
 Active les services :
