@@ -132,7 +132,6 @@ export function PrintersPage() {
     try {
       const printer = await syncPrinterNow(printerId)
       setPrinters((current) => current.map((item) => item.id === printer.id ? printer : item))
-      setJobsByPrinter((current) => ({ ...current, [printerId]: current[printerId] ?? [] }))
       await showJobs(printerId)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Impossible de synchroniser l’imprimante')
@@ -180,8 +179,8 @@ export function PrintersPage() {
               <span><b>PrusaLink</b>{printer.prusalinkEnabled ? 'Activé' : 'Désactivé'}</span>
               <span><b>URL</b>{printer.prusalinkUrl || 'Non configurée'}</span>
               <span><b>Bobine active</b>{printer.activeSpoolLabel || 'Non assignée'}</span>
-              <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
               <span><b>Assignée le</b>{formatDateTime(printer.activeSpoolAssignedAt)}</span>
+              <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
               <span><b>Dernière activité</b>{formatDateTime(printer.lastSeenAt)}</span>
               <span><b>Buse</b>{formatTemperature(printer.nozzleTemperature, printer.nozzleTargetTemperature)}</span>
               <span><b>Plateau</b>{formatTemperature(printer.bedTemperature, printer.bedTargetTemperature)}</span>

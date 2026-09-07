@@ -6,37 +6,59 @@ Application web mobile-first pour suivre les imprimantes 3D et le stock de bobin
 
 Le dépôt contient un dashboard React/Vite responsive et un backend Express/PostgreSQL :
 
-- état des machines et progression d'impression depuis la base PostgreSQL
-- stock de bobines avec matière, couleur, emplacement et niveau restant
-- écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait via l'API
+- authentification par email + mot de passe (inscription, connexion, déconnexion) avec session serveur (cookie httpOnly, stockée en base via `connect-pg-simple`)
+- modèle `users` prévu pour une future authentification déléguée à Authentik (colonnes `auth_provider`/`external_id`)
+- toutes les routes `/api/printers` et `/api/spools` nécessitent d'être authentifié
+- état des machines et progression d'impression depuis la base PostgreSQL et PrusaLink
+- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur et historique des impressions
+- liaison d’une bobine active par imprimante, avec décrément automatique du stock à la fin d’une impression PrusaLink lorsque le G-code expose `filament used [g]`
+- stock de bobines avec matière, couleur, emplacement et niveau restant, entièrement piloté par l'API
+- écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
+- écran de gestion des imprimantes avec configuration PrusaLink, synchronisation manuelle, bobine active et historique récent
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
-- actions rapides et statistiques d'atelier
-- API `/health`, configuration/synchronisation des imprimantes via `/api/printers` et CRUD `/api/spools`
-- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur, historique des impressions et liaison à une bobine active
-- décrément automatique du stock de la bobine assignée à la fin d’une impression PrusaLink à partir des métadonnées G-code
-- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `server/migrations/002_add_prusament_qr.sql`, `server/migrations/003_add_prusalink_sync.sql` et `server/migrations/004_link_prusalink_spools.sql`
+- API `/health`, `/api/auth/*` et CRUD `/api/printers` / `/api/spools`
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql`, `003_add_users.sql`, `003_add_prusalink_sync.sql` et `004_link_prusalink_spools.sql`
 
 ## Démarrage
 
 ```bash
 npm install
+cp .env.example .env
+```
+
+Configure `DATABASE_URL`, `SESSION_SECRET` et si besoin les variables PrusaLink dans `.env`, puis applique les migrations :
+
+```bash
+psql "$DATABASE_URL" -f server/migrations/001_initial.sql
+psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
+psql "$DATABASE_URL" -f server/migrations/004_link_prusalink_spools.sql
+```
+
+Lance l'API puis le frontend (le serveur de dev Vite proxifie `/api` et `/health` vers `http://localhost:3000`) :
+
+```bash
+npm run server
 npm run dev
 ```
 
-Pour lancer l'API :
+Crée un compte depuis l'écran d'inscription pour accéder au tableau de bord : sans backend/PostgreSQL configuré, l'application reste bloquée sur l'écran de connexion.
 
-```bash
-cp .env.example .env
-npm run server
-```
+En développement, lance `npm run server` et `npm run dev` dans deux terminaux. Ouvre ensuite l'adresse Vite affichée (généralement `http://localhost:5173`) : elle relaie automatiquement `/api` et `/health` vers l'API sur le port 3000.
 
-L'API attend une base PostgreSQL configurée par `DATABASE_URL`. Le front charge désormais les imprimantes et bobines directement depuis l'API.
-Pour PrusaLink, configure aussi :
+### Authentification par email et mot de passe
 
-- `PRUSALINK_SYNC_INTERVAL_MS` : fréquence de synchronisation des imprimantes activées
-- `PRUSALINK_REQUEST_TIMEOUT_MS` : timeout HTTP pour joindre une imprimante PrusaLink
+Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compte avec un email, un mot de passe (8 caractères minimum) et un nom affiché. Les mots de passe sont hachés avec `bcrypt` et ne sont jamais stockés en clair. La session est stockée côté serveur (cookie httpOnly `print_tracker_sid`) via `connect-pg-simple`, dans la table `session`.
 
-Les clés API PrusaLink sont stockées côté backend et ne sont jamais renvoyées au frontend.
+Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_SECURE=true` en production derrière HTTPS).
+
+La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
+
+### Intégration PrusaLink
+
+Configure `PRUSALINK_SYNC_INTERVAL_MS` pour la fréquence de synchronisation et `PRUSALINK_REQUEST_TIMEOUT_MS` pour le timeout réseau.
+Les clés API PrusaLink sont stockées uniquement côté backend et ne sont jamais renvoyées au frontend.
 Pour imputer automatiquement la consommation de filament, assigne une bobine active à chaque imprimante depuis l’écran Imprimantes.
 
 ## Déploiement V0 sur un LXC Debian
@@ -46,7 +68,9 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - DEV : `/opt/print-tracker-dev`, branche `develop`, API sur `3001`, service `print-tracker-dev.service`.
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
-- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build puis redémarre uniquement l'instance concernée.
+- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
+- Les migrations [003_add_users.sql](./server/migrations/003_add_users.sql), [003_add_prusalink_sync.sql](./server/migrations/003_add_prusalink_sync.sql) et [004_link_prusalink_spools.sql](./server/migrations/004_link_prusalink_spools.sql) ajoutent l’authentification, la synchronisation PrusaLink et l’imputation automatique de filament.
+- [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale
 
@@ -77,16 +101,18 @@ nano /etc/print-tracker-dev.env
 nano /etc/print-tracker-prod.env
 ```
 
-Applique les migrations PostgreSQL dans l'ordre :
+Applique les migrations PostgreSQL (une seule fois, exécutable de nouveau sans risque) :
 
 ```bash
-set -a
-. /etc/print-tracker-prod.env
-set +a
-psql "$DATABASE_URL" -f server/migrations/001_initial.sql
-psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
-psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
-psql "$DATABASE_URL" -f server/migrations/004_link_prusalink_spools.sql
+cd /opt/print-tracker-dev
+set -a; . /etc/print-tracker-dev.env; set +a
+npm ci
+npm run migrate
+
+cd /opt/print-tracker-prod
+set -a; . /etc/print-tracker-prod.env; set +a
+npm ci
+npm run migrate
 ```
 
 Active les services :
@@ -116,11 +142,11 @@ curl http://127.0.0.1:3001/health
 curl http://127.0.0.1:3000/health
 ```
 
-Le timer ne redéploie que si `origin/master` a changé. En cas d'échec du lint ou du build, le service en cours n'est pas redémarré.
+Le timer ne redéploie que si la branche distante a changé. En cas d'échec du lint, du build ou d'une migration, le script s'arrête (`set -e`) et le service en cours n'est pas redémarré.
 
 ### Publication avec Caddy
 
-Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) servent les deux builds et transmettent `/api` aux bons ports. Remplace les domaines, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
+Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) transmettent chaque domaine au service Node correspondant. Le service Node sert à la fois le build React et `/api`. Remplace les domaines et l'adresse IP du LXC, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
 
 ```bash
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile

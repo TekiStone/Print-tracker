@@ -19,7 +19,8 @@ if [[ "$LOCAL_COMMIT" == "$REMOTE_COMMIT" ]]; then
 fi
 
 "${GIT[@]}" merge --ff-only "origin/$BRANCH"
-npm ci --omit=optional
+npm ci
 npm run lint
 npm run build
+npm run migrate
 systemctl restart "$SERVICE_NAME"

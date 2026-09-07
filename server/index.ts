@@ -1,13 +1,27 @@
 import 'dotenv/config'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import bcrypt from 'bcryptjs'
+import connectPgSimple from 'connect-pg-simple'
 import cors from 'cors'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
+import session from 'express-session'
 import { Pool } from 'pg'
 import { startPrusaLinkScheduler, syncPrinter } from './prusalink.js'
 
-const app = express()
+declare module 'express-session' {
+  interface SessionData {
+    userId?: string
+  }
+}
+
 const port = Number(process.env.PORT ?? 3000)
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+const host = process.env.HOST ?? '0.0.0.0'
+let pool: Pool | null = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:5173'
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const frontendDirectory = path.join(projectRoot, 'dist')
 
 const printerSelect = `
   SELECT printers.id, printers.name, printers.model, printers.status, printers.current_job, printers.progress, printers.color, printers.last_seen_at, printers.prusalink_url,
@@ -19,7 +33,14 @@ const printerSelect = `
   LEFT JOIN spools ON spools.id = printers.active_spool_id AND spools.archived_at IS NULL
 `
 
-app.use(cors())
+export const app = express()
+
+export function setDatabasePool(database: Pool | null) {
+  pool = database
+}
+
+app.set('trust proxy', 1)
+app.use(cors({ origin: webOrigin, credentials: true }))
 app.use(express.json())
 app.use('/api', rateLimit({
   windowMs: 60_000,
@@ -27,6 +48,21 @@ app.use('/api', rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many API requests, please retry in a moment' },
+}))
+
+const PgSession = connectPgSimple(session)
+app.use(session({
+  store: pool ? new PgSession({ pool, tableName: 'session', createTableIfMissing: false }) : undefined,
+  secret: process.env.SESSION_SECRET ?? 'dev-only-insecure-secret',
+  resave: false,
+  saveUninitialized: false,
+  name: 'print_tracker_sid',
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.SESSION_COOKIE_SECURE === 'true',
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+  },
 }))
 
 function requirePool(response: express.Response): Pool | null {
@@ -37,12 +73,24 @@ function requirePool(response: express.Response): Pool | null {
   return pool
 }
 
+function requireAuth(request: express.Request, response: express.Response, next: express.NextFunction) {
+  if (!request.session.userId) {
+    response.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  next()
+}
+
 function trimmedText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
 function nullableText(value: unknown) {
   return typeof value === 'string' ? value.trim() || null : null
+}
+
+function routeParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value
 }
 
 function isHexColor(value: string) {
@@ -58,10 +106,127 @@ function isValidUrl(value: string) {
   }
 }
 
+type PublicUser = { id: string; email: string; name: string; role: string }
+
+async function parseJson(response: Response) {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+async function findPublicUserById(database: Pool, id: string): Promise<PublicUser | null> {
+  const result = await database.query('SELECT id, email, name, role FROM users WHERE id = $1', [id])
+  return result.rows[0] ?? null
+}
+
 async function loadPrinter(database: Pool, id: string) {
   const result = await database.query(`${printerSelect} WHERE printers.id = $1`, [id])
   return result.rows[0] ?? null
 }
+
+app.post('/api/auth/register', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  const { email, password, name } = request.body as Record<string, unknown>
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || password.length < 8 || typeof name !== 'string' || !name.trim()) {
+    response.status(400).json({ error: 'Email valide, mot de passe (8 caractères min.) et nom sont requis' })
+    return
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12)
+    const result = await database.query(
+      `INSERT INTO users (email, password_hash, name)
+       VALUES ($1, $2, $3)
+       RETURNING id, email, name, role`,
+      [email.trim().toLowerCase(), passwordHash, name.trim()],
+    )
+    const user = result.rows[0] as PublicUser
+    request.session.regenerate((error) => {
+      if (error) {
+        response.status(500).json({ error: 'Unable to create session' })
+        return
+      }
+      request.session.userId = user.id
+      response.status(201).json(user)
+    })
+  } catch (error) {
+    const isUniqueViolation = typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === '23505'
+    if (isUniqueViolation) {
+      response.status(409).json({ error: 'Un compte existe déjà avec cet email' })
+      return
+    }
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to create account' })
+  }
+})
+
+app.post('/api/auth/login', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  const { email, password } = request.body as Record<string, unknown>
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
+    response.status(400).json({ error: 'Email et mot de passe requis' })
+    return
+  }
+
+  try {
+    const result = await database.query(
+      'SELECT id, email, name, role, password_hash FROM users WHERE lower(email) = lower($1)',
+      [email.trim()],
+    )
+    const user = result.rows[0] as (PublicUser & { password_hash: string | null }) | undefined
+    if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+      response.status(401).json({ error: 'Email ou mot de passe incorrect' })
+      return
+    }
+
+    request.session.regenerate((error) => {
+      if (error) {
+        response.status(500).json({ error: 'Unable to create session' })
+        return
+      }
+      request.session.userId = user.id
+      response.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+    })
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to sign in' })
+  }
+})
+
+app.post('/api/auth/logout', (request, response) => {
+  request.session.destroy((error) => {
+    if (error) {
+      response.status(500).json({ error: 'Unable to sign out' })
+      return
+    }
+    response.clearCookie('print_tracker_sid')
+    response.status(204).end()
+  })
+})
+
+app.get('/api/auth/me', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  if (!request.session.userId) {
+    response.status(401).json({ error: 'Not authenticated' })
+    return
+  }
+
+  try {
+    const user = await findPublicUserById(database, request.session.userId)
+    if (!user) {
+      response.status(401).json({ error: 'Not authenticated' })
+      return
+    }
+    response.json(user)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load session' })
+  }
+})
 
 app.get('/health', async (_request, response) => {
   if (!pool) {
@@ -77,7 +242,7 @@ app.get('/health', async (_request, response) => {
   }
 })
 
-app.get('/api/printers', async (_request, response) => {
+app.get('/api/printers', requireAuth, async (_request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -89,7 +254,7 @@ app.get('/api/printers', async (_request, response) => {
   }
 })
 
-app.post('/api/printers', async (request, response) => {
+app.post('/api/printers', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -99,8 +264,8 @@ app.post('/api/printers', async (request, response) => {
   const normalizedColor = trimmedText(color) || '#f27852'
   const normalizedUrl = nullableText(prusalinkUrl)
   const normalizedApiKey = nullableText(prusalinkApiKey)
-  const enabled = typeof prusalinkEnabled === 'boolean' ? prusalinkEnabled : false
   const normalizedActiveSpoolId = nullableText(activeSpoolId)
+  const enabled = typeof prusalinkEnabled === 'boolean' ? prusalinkEnabled : false
 
   if (!normalizedName || !normalizedModel || !isHexColor(normalizedColor)) {
     response.status(400).json({ error: 'Invalid printer data' })
@@ -114,7 +279,7 @@ app.post('/api/printers', async (request, response) => {
 
   try {
     if (normalizedActiveSpoolId) {
-      const spoolResult = await database.query(`SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL`, [normalizedActiveSpoolId])
+      const spoolResult = await database.query('SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL', [normalizedActiveSpoolId])
       if (spoolResult.rowCount === 0) {
         response.status(400).json({ error: 'Invalid active spool' })
         return
@@ -133,17 +298,21 @@ app.post('/api/printers', async (request, response) => {
   }
 })
 
-app.patch('/api/printers/:id', async (request, response) => {
+app.patch('/api/printers/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
+  const printerId = routeParam(request.params.id)
+  if (!printerId) {
+    response.status(400).json({ error: 'Invalid printer id' })
+    return
+  }
 
   const { name, model, color, prusalinkUrl, prusalinkApiKey, prusalinkEnabled, activeSpoolId } = request.body as Record<string, unknown>
-
   if ((name !== undefined && !trimmedText(name)) ||
       (model !== undefined && !trimmedText(model)) ||
       (color !== undefined && (!trimmedText(color) || !isHexColor(trimmedText(color)))) ||
-      (prusalinkUrl !== undefined && typeof prusalinkUrl !== 'string') ||
-      (prusalinkApiKey !== undefined && typeof prusalinkApiKey !== 'string') ||
+      (prusalinkUrl !== undefined && prusalinkUrl !== null && typeof prusalinkUrl !== 'string') ||
+      (prusalinkApiKey !== undefined && prusalinkApiKey !== null && typeof prusalinkApiKey !== 'string') ||
       (prusalinkEnabled !== undefined && typeof prusalinkEnabled !== 'boolean') ||
       (activeSpoolId !== undefined && activeSpoolId !== null && typeof activeSpoolId !== 'string')) {
     response.status(400).json({ error: 'Invalid printer update' })
@@ -154,7 +323,7 @@ app.patch('/api/printers/:id', async (request, response) => {
     `SELECT prusalink_url, prusalink_api_key, prusalink_enabled
      FROM printers
      WHERE id = $1`,
-    [request.params.id],
+    [printerId],
   )
   if (current.rowCount === 0) {
     response.status(404).json({ error: 'Printer not found' })
@@ -164,22 +333,22 @@ app.patch('/api/printers/:id', async (request, response) => {
   const nextUrl = prusalinkUrl === undefined ? current.rows[0].prusalink_url : nullableText(prusalinkUrl)
   const nextApiKey = prusalinkApiKey === undefined ? current.rows[0].prusalink_api_key : nullableText(prusalinkApiKey)
   const nextEnabled = prusalinkEnabled === undefined ? current.rows[0].prusalink_enabled : prusalinkEnabled
+  const nextActiveSpoolId = activeSpoolId === undefined ? undefined : nullableText(activeSpoolId)
 
   if ((nextUrl && !isValidUrl(nextUrl)) || (nextEnabled && (!nextUrl || !nextApiKey))) {
     response.status(400).json({ error: 'Invalid PrusaLink configuration' })
     return
   }
 
-  const nextActiveSpoolId = activeSpoolId === undefined ? undefined : nullableText(activeSpoolId)
-  if (nextActiveSpoolId) {
-    const spoolResult = await database.query(`SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL`, [nextActiveSpoolId])
-    if (spoolResult.rowCount === 0) {
-      response.status(400).json({ error: 'Invalid active spool' })
-      return
-    }
-  }
-
   try {
+    if (nextActiveSpoolId) {
+      const spoolResult = await database.query('SELECT id FROM spools WHERE id = $1 AND archived_at IS NULL', [nextActiveSpoolId])
+      if (spoolResult.rowCount === 0) {
+        response.status(400).json({ error: 'Invalid active spool' })
+        return
+      }
+    }
+
     const result = await database.query(
       `UPDATE printers
        SET name = COALESCE($1, name),
@@ -206,29 +375,54 @@ app.patch('/api/printers/:id', async (request, response) => {
         nextEnabled,
         nextActiveSpoolId ?? null,
         activeSpoolId !== undefined,
-        request.params.id,
+        printerId,
       ],
     )
     if (result.rowCount === 0) {
       response.status(404).json({ error: 'Printer not found' })
       return
     }
-    response.json(await loadPrinter(database, request.params.id))
+    response.json(await loadPrinter(database, printerId))
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to update printer' })
   }
 })
 
-app.post('/api/printers/:id/sync', async (request, response) => {
+app.delete('/api/printers/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
+  const printerId = routeParam(request.params.id)
+  if (!printerId) {
+    response.status(400).json({ error: 'Invalid printer id' })
+    return
+  }
+  try {
+    const result = await database.query('DELETE FROM printers WHERE id = $1 RETURNING id', [printerId])
+    if (!result.rowCount) {
+      response.status(404).json({ error: 'Printer not found' })
+      return
+    }
+    response.status(204).end()
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to delete printer' })
+  }
+})
+
+app.post('/api/printers/:id/sync', requireAuth, async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const printerId = routeParam(request.params.id)
+  if (!printerId) {
+    response.status(400).json({ error: 'Invalid printer id' })
+    return
+  }
 
   try {
     const printerResult = await database.query(
       `SELECT id, prusalink_url, prusalink_api_key, active_spool_id
        FROM printers
        WHERE id = $1 AND prusalink_enabled = true`,
-      [request.params.id],
+      [printerId],
     )
 
     if (printerResult.rowCount === 0) {
@@ -237,15 +431,20 @@ app.post('/api/printers/:id/sync', async (request, response) => {
     }
 
     await syncPrinter(database, printerResult.rows[0])
-    response.json(await loadPrinter(database, request.params.id))
+    response.json(await loadPrinter(database, printerId))
   } catch (error) {
     response.status(502).json({ error: error instanceof Error ? error.message : 'Unable to sync printer' })
   }
 })
 
-app.get('/api/printers/:id/jobs', async (request, response) => {
+app.get('/api/printers/:id/jobs', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
+  const printerId = routeParam(request.params.id)
+  if (!printerId) {
+    response.status(400).json({ error: 'Invalid printer id' })
+    return
+  }
 
   try {
     const result = await database.query(
@@ -256,7 +455,7 @@ app.get('/api/printers/:id/jobs', async (request, response) => {
        WHERE print_jobs.printer_id = $1
        ORDER BY print_jobs.created_at DESC
        LIMIT 10`,
-      [request.params.id],
+      [printerId],
     )
     response.json(result.rows)
   } catch (error) {
@@ -264,7 +463,7 @@ app.get('/api/printers/:id/jobs', async (request, response) => {
   }
 })
 
-app.get('/api/spools', async (_request, response) => {
+app.get('/api/spools', requireAuth, async (_request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -281,7 +480,7 @@ app.get('/api/spools', async (_request, response) => {
   }
 })
 
-app.post('/api/spools', async (request, response) => {
+app.post('/api/spools', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { brand, material, color, initialGrams, remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -307,7 +506,7 @@ app.post('/api/spools', async (request, response) => {
   }
 })
 
-app.patch('/api/spools/:id', async (request, response) => {
+app.patch('/api/spools/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -341,12 +540,12 @@ app.patch('/api/spools/:id', async (request, response) => {
   }
 })
 
-app.delete('/api/spools/:id', async (request, response) => {
+app.delete('/api/spools/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   try {
     const result = await database.query(
-      `UPDATE spools SET archived_at = now() WHERE id = $1 AND archived_at IS NULL RETURNING id`,
+      'UPDATE spools SET archived_at = now() WHERE id = $1 AND archived_at IS NULL RETURNING id',
       [request.params.id],
     )
     if (result.rowCount === 0) {
@@ -359,10 +558,14 @@ app.delete('/api/spools/:id', async (request, response) => {
   }
 })
 
-if (pool) {
-  startPrusaLinkScheduler(pool)
-}
-
-app.listen(port, () => {
-  console.log(`Print Tracker API listening on port ${port}`)
+app.use(express.static(frontendDirectory))
+app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_request, response) => {
+  response.sendFile(path.join(frontendDirectory, 'index.html'))
 })
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (pool) startPrusaLinkScheduler(pool)
+  app.listen(port, host, () => {
+    console.log(`Print Tracker listening on http://${host}:${port}`)
+  })
+}
