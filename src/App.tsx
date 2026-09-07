@@ -73,27 +73,31 @@ function PrinterCard({ printer }: { printer: Printer }) {
 
 export function App() {
   const [activeNav, setActiveNav] = useState('Vue d’ensemble')
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className={isMobileNavOpen ? 'sidebar sidebar--open' : 'sidebar'}>
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
+        <button type="button" className="mobile-close" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)}>×</button>
         <nav>
           {['Vue d’ensemble', 'Imprimantes', 'Bobines', 'Historique'].map((item, index) => (
-            <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(item)}>
+            <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => { setActiveNav(item); setIsMobileNavOpen(false) }}>
               <Icon>{['⌂', '▣', '◉', '↺'][index]}</Icon>{item}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button type="button" className="nav-item"><Icon>⚙</Icon>Paramètres</button>
+          <button type="button" className="nav-item" onClick={() => setIsMobileNavOpen(false)}><Icon>⚙</Icon>Paramètres</button>
           <div className="profile"><div className="profile-avatar">T</div><div><strong>Thomas</strong><small>Administrateur</small></div><span>•••</span></div>
         </div>
       </aside>
+      {isMobileNavOpen && <button type="button" className="sidebar-overlay" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)} />}
 
       <main className="main">
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">P</div><strong>print<span>tracker</span></strong></div>
+          <button type="button" className="mobile-menu" aria-label="Ouvrir le menu" aria-expanded={isMobileNavOpen} onClick={() => setIsMobileNavOpen((open) => !open)}>☰</button>
           <div className="connection"><span className="connection-dot" /> Toutes les machines sont connectées</div>
           <button type="button" className="notification" aria-label="Notifications">♧<i /></button>
         </header>
