@@ -70,7 +70,6 @@ app.get('/api/auth/csrf-token', (request, response) => {
   response.json({ token: generateToken(request) })
 })
 app.use('/api', requireTrustedOrigin)
-app.use('/api', csrfSynchronisedProtection)
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
@@ -157,7 +156,7 @@ async function loadPrinter(database: Pool, id: string) {
   return result.rows[0] ?? null
 }
 
-app.post('/api/auth/register', async (request, response) => {
+app.post('/api/auth/register', csrfSynchronisedProtection, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -194,7 +193,7 @@ app.post('/api/auth/register', async (request, response) => {
   }
 })
 
-app.post('/api/auth/login', async (request, response) => {
+app.post('/api/auth/login', csrfSynchronisedProtection, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -228,7 +227,7 @@ app.post('/api/auth/login', async (request, response) => {
   }
 })
 
-app.post('/api/auth/logout', (request, response) => {
+app.post('/api/auth/logout', csrfSynchronisedProtection, (request, response) => {
   request.session.destroy((error) => {
     if (error) {
       response.status(500).json({ error: 'Unable to sign out' })
@@ -285,7 +284,7 @@ app.get('/api/printers', requireAuth, async (_request, response) => {
   }
 })
 
-app.post('/api/printers', requireAuth, async (request, response) => {
+app.post('/api/printers', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -329,7 +328,7 @@ app.post('/api/printers', requireAuth, async (request, response) => {
   }
 })
 
-app.patch('/api/printers/:id', requireAuth, async (request, response) => {
+app.patch('/api/printers/:id', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const printerId = routeParam(request.params.id)
@@ -419,7 +418,7 @@ app.patch('/api/printers/:id', requireAuth, async (request, response) => {
   }
 })
 
-app.delete('/api/printers/:id', requireAuth, async (request, response) => {
+app.delete('/api/printers/:id', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const printerId = routeParam(request.params.id)
@@ -439,7 +438,7 @@ app.delete('/api/printers/:id', requireAuth, async (request, response) => {
   }
 })
 
-app.post('/api/printers/:id/sync', requireAuth, async (request, response) => {
+app.post('/api/printers/:id/sync', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const printerId = routeParam(request.params.id)
@@ -511,7 +510,7 @@ app.get('/api/spools', requireAuth, async (_request, response) => {
   }
 })
 
-app.post('/api/spools', requireAuth, async (request, response) => {
+app.post('/api/spools', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { brand, material, color, initialGrams, remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -537,7 +536,7 @@ app.post('/api/spools', requireAuth, async (request, response) => {
   }
 })
 
-app.patch('/api/spools/:id', requireAuth, async (request, response) => {
+app.patch('/api/spools/:id', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -571,7 +570,7 @@ app.patch('/api/spools/:id', requireAuth, async (request, response) => {
   }
 })
 
-app.delete('/api/spools/:id', requireAuth, async (request, response) => {
+app.delete('/api/spools/:id', csrfSynchronisedProtection, requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   try {
