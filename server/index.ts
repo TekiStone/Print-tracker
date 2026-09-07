@@ -64,6 +64,7 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 7,
   },
 }))
+app.use('/api', requireTrustedOrigin)
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
@@ -79,6 +80,30 @@ function requireAuth(request: express.Request, response: express.Response, next:
     return
   }
   next()
+}
+
+function isSafeMethod(method: string) {
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+}
+
+function hasTrustedOrigin(request: express.Request) {
+  const source = request.get('origin') ?? request.get('referer')
+  if (!source) return false
+
+  try {
+    return new URL(source).origin === webOrigin
+  } catch {
+    return false
+  }
+}
+
+function requireTrustedOrigin(request: express.Request, response: express.Response, next: express.NextFunction) {
+  if (isSafeMethod(request.method) || hasTrustedOrigin(request)) {
+    next()
+    return
+  }
+
+  response.status(403).json({ error: 'CSRF protection rejected this request' })
 }
 
 function trimmedText(value: unknown) {
