@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
 import { SpoolsPage } from './SpoolsPage'
+import { LoginPage } from './LoginPage'
+import { useAuth } from './auth'
 
-type PrinterStatus = 'printing' | 'ready' | 'offline'
+type PrinterStatus = 'printing' | 'ready' | 'offline' | 'error'
 
 type Printer = {
+  id: string
   name: string
   model: string
   status: PrinterStatus
-  job?: string
-  progress?: number
+  current_job: string | null
+  progress: number | null
   color: string
+  last_seen_at: string | null
 }
 
 type Spool = {
@@ -18,27 +21,16 @@ type Spool = {
   brand: string
   material: string
   color: string
-  remaining: number
-  location: string
+  remaining_grams: number
+  initial_grams: number
+  location: string | null
 }
-
-const printers: Printer[] = [
-  { name: 'Prusa XL', model: '5 outils', status: 'printing', job: 'Support mural', progress: 68, color: '#f47b5f' },
-  { name: 'Prusa Core One+', model: 'Core One+', status: 'ready', color: '#4b9bff' },
-  { name: 'Prusa MINI+', model: 'MINI+', status: 'offline', color: '#a58bff' },
-]
-
-const spools: Spool[] = [
-  { id: 'PLA-001', brand: 'Prusament', material: 'PLA', color: 'Galaxy Black', remaining: 82, location: 'Boîte A · 01' },
-  { id: 'PETG-014', brand: 'eSUN', material: 'PETG', color: 'Orange', remaining: 41, location: 'Boîte A · 02' },
-  { id: 'PLA-023', brand: 'Prusament', material: 'PLA', color: 'Prusa Orange', remaining: 16, location: 'Boîte B · 04' },
-  { id: 'ASA-003', brand: 'Polymaker', material: 'ASA', color: 'White', remaining: 7, location: 'Boîte C · 01' },
-]
 
 const statusLabel: Record<PrinterStatus, string> = {
   printing: 'En impression',
   ready: 'Prête',
   offline: 'Hors ligne',
+  error: 'Erreur',
 }
 
 function Icon({ children }: { children: string }) {
@@ -58,13 +50,12 @@ function PrinterCard({ printer }: { printer: Printer }) {
       </div>
       {printer.status === 'printing' ? (
         <div className="job">
-          <div className="job__row"><span>{printer.job}</span><strong>{printer.progress}%</strong></div>
+          <div className="job__row"><span>{printer.current_job}</span><strong>{printer.progress}%</strong></div>
           <div className="progress"><span style={{ width: `${printer.progress}%` }} /></div>
-          <small>Fin estimée dans 1 h 24</small>
         </div>
       ) : (
         <div className="printer-empty">
-          <span>{printer.status === 'ready' ? 'Aucun travail en attente' : 'Dernière connexion : hier à 22:14'}</span>
+          <span>{printer.status === 'ready' ? 'Aucun travail en attente' : 'Aucune connexion récente'}</span>
           <button type="button" className="text-button">Voir les détails →</button>
         </div>
       )}
@@ -72,110 +63,130 @@ function PrinterCard({ printer }: { printer: Printer }) {
   )
 }
 
-function AuthPage({ oidc }: { oidc: boolean }) {
-  const [register, setRegister] = useState(false)
+function spoolColorSwatch(color: string) {
+  const value = color.toLowerCase()
+  if (value.includes('black')) return '#272b35'
+  if (value.includes('orange')) return '#ed754e'
+  if (value.includes('white')) return '#e9edf3'
+  return '#ec6c45'
+}
+
+function Dashboard({ user }: { user: { name: string } }) {
+  const [printers, setPrinters] = useState<Printer[]>([])
+  const [spools, setSpools] = useState<Spool[]>([])
   const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError('')
-    setBusy(true)
-    const values = Object.fromEntries(new FormData(event.currentTarget))
-    const response = await fetch(register ? '/auth/register' : '/auth/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(register
-        ? { username: values.username, email: values.email, password: values.password }
-        : { identifier: values.identifier, password: values.password }),
-    })
-    if (!response.ok) {
-      const result = await response.json() as { error?: string }
-      setError(result.error ?? 'Impossible de traiter la demande')
-      setBusy(false)
-      return
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const [printersResponse, spoolsResponse] = await Promise.all([
+          fetch('/api/printers', { credentials: 'include' }),
+          fetch('/api/spools', { credentials: 'include' }),
+        ])
+        if (!printersResponse.ok || !spoolsResponse.ok) {
+          if (!cancelled) setError('Impossible de charger les données de l’atelier.')
+          return
+        }
+        const [printersData, spoolsData] = await Promise.all([printersResponse.json(), spoolsResponse.json()])
+        if (!cancelled) {
+          setPrinters(printersData)
+          setSpools(spoolsData)
+        }
+      } catch {
+        if (!cancelled) setError('Impossible de charger les données de l’atelier.')
+      }
     }
-    window.location.reload()
-  }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
-  return <div className="login-page"><div className="login-card">
-    <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
-    <h1>{register ? 'Créer ton compte' : 'Ton atelier, au même endroit'}</h1>
-    <p>{register ? 'Inscris-toi pour accéder à tes imprimantes et tes bobines.' : 'Connecte-toi pour accéder à ton atelier.'}</p>
-    <form className="auth-form" onSubmit={submit}>
-      {register ? <><label>Nom utilisateur<input name="username" required minLength={3} maxLength={32} pattern="[a-zA-Z0-9_.-]+" autoComplete="username" /></label><label>E-mail (facultatif)<input name="email" type="email" autoComplete="email" /></label></> : <label>Nom utilisateur ou e-mail<input name="identifier" required autoComplete="username" /></label>}
-      <label>Mot de passe<input name="password" type="password" required minLength={10} autoComplete={register ? 'new-password' : 'current-password'} /><small>10 caractères minimum</small></label>
+  const activePrinters = printers.filter((printer) => printer.status !== 'offline').length
+  const lowSpools = spools.filter((spool) => Math.round((spool.remaining_grams / spool.initial_grams) * 100) < 20).length
+  const totalRemainingKg = (spools.reduce((total, spool) => total + spool.remaining_grams, 0) / 1000).toFixed(2)
+
+  return (
+    <div className="content">
+      <div className="page-heading">
+        <div><h1>Bonjour {user.name} <span>👋</span></h1><p className="subtitle">Voici l’état de ton atelier aujourd’hui.</p></div>
+      </div>
+
       {error && <p className="auth-error">{error}</p>}
-      <button className="primary-button login-button" disabled={busy}>{register ? "S'inscrire" : 'Se connecter'}</button>
-    </form>
-    <button type="button" className="text-button auth-switch" onClick={() => { setRegister(!register); setError('') }}>{register ? 'J’ai déjà un compte' : 'Créer un compte'}</button>
-    {oidc && <a className="oidc-link" href="/auth/login">Se connecter avec Authentik</a>}
-  </div></div>
+
+      <section className="stats">
+        <div className="stat-card"><div className="stat-icon stat-icon--blue"><Icon>▣</Icon></div><div><span>Imprimantes actives</span><strong>{activePrinters} <small>/ {printers.length}</small></strong></div></div>
+        <div className="stat-card"><div className="stat-icon stat-icon--orange"><Icon>◉</Icon></div><div><span>Bobines en stock</span><strong>{spools.length}</strong></div><em className="neutral">{lowSpools} bientôt vides</em></div>
+        <div className="stat-card"><div className="stat-icon stat-icon--purple"><Icon>↺</Icon></div><div><span>Poids de filament restant</span><strong>{totalRemainingKg} kg</strong></div></div>
+      </section>
+
+      <div className="section-heading"><div><h2>Tes imprimantes</h2><p>Suivi en temps réel de ton parc</p></div></div>
+      {printers.length > 0 ? (
+        <section className="printer-grid">{printers.map((printer) => <PrinterCard key={printer.id} printer={printer} />)}</section>
+      ) : (
+        <p className="empty-spools">Aucune imprimante enregistrée pour le moment.</p>
+      )}
+
+      <div className="lower-grid">
+        <section className="panel">
+          <div className="section-heading"><div><h2>Stock de bobines</h2><p>Les dernières bobines ajoutées</p></div></div>
+          {spools.length > 0 ? (
+            <div className="spool-list">{spools.slice(0, 6).map((spool) => {
+              const percent = Math.round((spool.remaining_grams / spool.initial_grams) * 100)
+              return (
+                <div className="spool-row" key={spool.id}>
+                  <div className="spool-color" style={{ background: spoolColorSwatch(spool.color) }} />
+                  <div className="spool-info"><strong>{spool.brand} <small>{spool.material}</small></strong><span>{spool.color} · {spool.location ?? 'Emplacement non défini'}</span></div>
+                  <div className="spool-remaining"><strong>{percent}%</strong><div className="mini-progress"><span className={percent < 20 ? 'low' : ''} style={{ width: `${percent}%` }} /></div></div>
+                </div>
+              )
+            })}</div>
+          ) : (
+            <p className="empty-spools">Aucune bobine enregistrée pour le moment.</p>
+          )}
+        </section>
+      </div>
+    </div>
+  )
 }
 
 export function App() {
+  const { user, status, logout } = useAuth()
   const [activeNav, setActiveNav] = useState('Vue d’ensemble')
-  const [auth, setAuth] = useState<{ enabled: boolean; oidc?: boolean; authenticated: boolean; user: { name?: string; username: string; picture?: string } | null } | null>(null)
 
-  useEffect(() => {
-    fetch('/auth/config').then((configResponse) => configResponse.json() as Promise<{ enabled: boolean }>)
-      .then((config) => fetch('/auth/me').then((userResponse) => userResponse.json().then((account) => setAuth({ ...config, ...account }))))
-      .catch(() => setAuth({ enabled: false, authenticated: false, user: null }))
-  }, [])
-
-  if (auth?.enabled && !auth.authenticated) {
-    return <AuthPage oidc={Boolean(auth.oidc)} />
+  if (status === 'loading') {
+    return <div className="auth-shell"><p>Chargement…</p></div>
   }
 
-  const accountName = auth?.user?.name ?? auth?.user?.username ?? 'Thomas'
+  if (status === 'unauthenticated' || !user) {
+    return <LoginPage />
+  }
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
         <nav>
-          {['Vue d’ensemble', 'Imprimantes', 'Bobines', 'Historique'].map((item, index) => (
+          {['Vue d’ensemble', 'Bobines'].map((item) => (
             <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(item)}>
-              <Icon>{['⌂', '▣', '◉', '↺'][index]}</Icon>{item}
+              <Icon>{item === 'Vue d’ensemble' ? '⌂' : '◉'}</Icon>{item}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button type="button" className="nav-item"><Icon>⚙</Icon>Paramètres</button>
-          <div className="profile"><div className="profile-avatar">{accountName[0]?.toUpperCase()}</div><div><strong>{accountName}</strong><small>Compte utilisateur</small></div>{auth?.authenticated && <button type="button" className="logout-button" onClick={() => fetch('/auth/logout', { method: 'POST' }).then(() => window.location.reload())}>Déconnexion</button>}</div>
+          <div className="profile"><div className="profile-avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{user.role === 'admin' ? 'Administrateur' : 'Membre'}</small></div></div>
+          <button type="button" className="nav-item" onClick={() => logout()}><Icon>⏻</Icon>Déconnexion</button>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">P</div><strong>print<span>tracker</span></strong></div>
-          <div className="connection"><span className="connection-dot" /> Toutes les machines sont connectées</div>
-          <button type="button" className="notification" aria-label="Notifications">♧<i /></button>
+          <button type="button" className="text-button" onClick={() => logout()}>Déconnexion</button>
         </header>
 
-        {activeNav === 'Bobines' ? <SpoolsPage /> : <div className="content">
-          <div className="page-heading">
-            <div><p className="eyebrow">LUNDI 7 SEPTEMBRE 2026</p><h1>Bonjour {accountName} <span>👋</span></h1><p className="subtitle">Voici l’état de ton atelier aujourd’hui.</p></div>
-            <button type="button" className="primary-button"><span>+</span> Ajouter</button>
-          </div>
-
-          <section className="stats">
-            <div className="stat-card"><div className="stat-icon stat-icon--blue"><Icon>▣</Icon></div><div><span>Imprimantes actives</span><strong>2 <small>/ 3</small></strong></div><em className="positive">+1 ce mois</em></div>
-            <div className="stat-card"><div className="stat-icon stat-icon--orange"><Icon>◉</Icon></div><div><span>Bobines en stock</span><strong>48 <small>/ 52</small></strong></div><em className="neutral">4 bientôt vides</em></div>
-            <div className="stat-card"><div className="stat-icon stat-icon--purple"><Icon>↺</Icon></div><div><span>Impressions ce mois</span><strong>27</strong></div><em className="positive">+12% vs août</em></div>
-          </section>
-
-          <div className="section-heading"><div><h2>Tes imprimantes</h2><p>Suivi en temps réel de ton parc</p></div><button type="button" className="text-button">Voir tout →</button></div>
-          <section className="printer-grid">{printers.map((printer) => <PrinterCard key={printer.name} printer={printer} />)}</section>
-
-          <div className="lower-grid">
-            <section className="panel">
-              <div className="section-heading"><div><h2>Stock de bobines</h2><p>Les dernières bobines ajoutées</p></div><button type="button" className="text-button">Gérer le stock →</button></div>
-              <div className="spool-list">{spools.map((spool) => <div className="spool-row" key={spool.id}><div className="spool-color" style={{ background: spool.color.toLowerCase().includes('black') ? '#272b35' : spool.color.toLowerCase().includes('orange') ? '#ed754e' : spool.color.toLowerCase().includes('white') ? '#e9edf3' : '#ec6c45' }} /><div className="spool-info"><strong>{spool.brand} <small>{spool.material}</small></strong><span>{spool.color} · {spool.location}</span></div><div className="spool-remaining"><strong>{spool.remaining}%</strong><div className="mini-progress"><span className={spool.remaining < 20 ? 'low' : ''} style={{ width: `${spool.remaining}%` }} /></div></div></div>)}</div>
-            </section>
-            <section className="panel quick-panel"><div className="section-heading"><div><h2>Actions rapides</h2><p>Gagne du temps</p></div></div><button type="button" className="quick-action"><span className="quick-icon orange">+</span><span><strong>Ajouter une bobine</strong><small>Enregistrer un nouveau filament</small></span><b>→</b></button><button type="button" className="quick-action"><span className="quick-icon purple">↺</span><span><strong>Déclarer une impression</strong><small>Ajouter une impression manuelle</small></span><b>→</b></button></section>
-          </div>
-        </div>}
+        {activeNav === 'Bobines' ? <SpoolsPage /> : <Dashboard user={user} />}
       </main>
     </div>
   )

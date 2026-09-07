@@ -1,14 +1,23 @@
 import 'dotenv/config'
+import bcrypt from 'bcryptjs'
+import connectPgSimple from 'connect-pg-simple'
 import cors from 'cors'
 import express from 'express'
+import session from 'express-session'
 import { Pool } from 'pg'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authConfigured, completeLogin, hashPassword, requireAuth, sessionMiddleware, startLogin, verifyPassword } from './auth.js'
+
+declare module 'express-session' {
+  interface SessionData {
+    userId?: string
+  }
+}
 
 const port = Number(process.env.PORT ?? 3000)
 const host = process.env.HOST ?? '0.0.0.0'
 let pool: Pool | null = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:5173'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const frontendDirectory = path.join(projectRoot, 'dist')
 
@@ -19,92 +28,23 @@ export function setDatabasePool(database: Pool | null) {
 }
 
 app.set('trust proxy', 1)
-app.use(cors())
-app.use(sessionMiddleware())
+app.use(cors({ origin: webOrigin, credentials: true }))
 app.use(express.json())
 
-app.get('/auth/config', (_request, response) => response.json({ enabled: authConfigured() || pool !== null, oidc: authConfigured() }))
-app.get('/auth/login', async (request, response, next) => {
-  try { await startLogin(request, response) } catch (error) { next(error) }
-})
-app.get('/auth/callback', async (request, response, next) => {
-  try {
-    const user = await completeLogin(request, response)
-    if (user && pool) {
-      await pool.query(
-        `INSERT INTO users (oidc_subject, username, email, display_name, picture_url, last_login_at)
-         VALUES ($1, $2, $3, $4, $5, now())
-         ON CONFLICT (oidc_subject) DO UPDATE SET username = $2, email = $3, display_name = $4, picture_url = $5, last_login_at = now()`,
-        [user.subject, user.username, user.email ?? null, user.name ?? null, user.picture ?? null],
-      )
-    }
-  } catch (error) { next(error) }
-})
-app.get('/auth/me', (request, response) => response.json({ authenticated: Boolean(request.session.user), user: request.session.user ?? null }))
-app.post('/auth/logout', (request, response) => {
-  request.session.destroy((error) => {
-    if (error) { response.status(500).json({ error: 'Unable to logout' }); return }
-    response.clearCookie('connect.sid')
-    response.status(204).end()
-  })
-})
-
-app.post('/auth/register', async (request, response, next) => {
-    const database = requirePool(response)
-    if (!database) return
-    const { username, email, password } = request.body as Record<string, unknown>
-    if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) ||
-        (email !== undefined && typeof email !== 'string') ||
-        typeof password !== 'string' || password.length < 10) {
-      response.status(400).json({ error: 'Nom utilisateur ou mot de passe invalide' })
-      return
-    }
-    try {
-      const passwordHash = await hashPassword(password)
-      const result = await database.query<{ id: string; username: string; email: string | null }>(
-        `INSERT INTO users (oidc_subject, username, email, password_hash)
-         VALUES (NULL, $1, $2, $3)
-         RETURNING id, username, email`,
-        [username.trim(), typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null, passwordHash],
-      )
-      const user = result.rows[0]
-      request.session.user = { subject: `local:${user.id}`, username: user.username, email: user.email ?? undefined }
-      response.status(201).json({ user: request.session.user })
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && (error as { code?: string }).code === '23505') {
-        response.status(409).json({ error: 'Nom utilisateur ou adresse e-mail déjà utilisé' })
-        return
-      }
-      next(error)
-    }
-})
-
-app.post('/auth/login', async (request, response, next) => {
-    const database = requirePool(response)
-    if (!database) return
-    const { identifier, password } = request.body as Record<string, unknown>
-    if (typeof identifier !== 'string' || typeof password !== 'string' || !identifier.trim() || !password) {
-      response.status(400).json({ error: 'Identifiants invalides' })
-      return
-    }
-    try {
-      const result = await database.query<{ id: string; username: string; email: string | null; password_hash: string | null }>(
-        `SELECT id, username, email, password_hash FROM users
-         WHERE lower(username) = lower($1) OR lower(email) = lower($1)
-         LIMIT 1`,
-        [identifier.trim()],
-      )
-      const account = result.rows[0]
-      if (!account?.password_hash || !(await verifyPassword(password, account.password_hash))) {
-        response.status(401).json({ error: 'Identifiants invalides' })
-        return
-      }
-      request.session.user = { subject: `local:${account.id}`, username: account.username, email: account.email ?? undefined }
-      response.json({ user: request.session.user })
-    } catch (error) {
-      next(error)
-    }
-})
+const PgSession = connectPgSimple(session)
+app.use(session({
+  store: pool ? new PgSession({ pool, tableName: 'session', createTableIfMissing: false }) : undefined,
+  secret: process.env.SESSION_SECRET ?? 'dev-only-insecure-secret',
+  resave: false,
+  saveUninitialized: false,
+  name: 'print_tracker_sid',
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.SESSION_COOKIE_SECURE === 'true',
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+  },
+}))
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
@@ -113,6 +53,122 @@ function requirePool(response: express.Response): Pool | null {
   }
   return pool
 }
+
+function requireAuth(request: express.Request, response: express.Response, next: express.NextFunction) {
+  if (!request.session.userId) {
+    response.status(401).json({ error: 'Authentication required' })
+    return
+  }
+  next()
+}
+
+type PublicUser = { id: string; email: string; name: string; role: string }
+
+async function findPublicUserById(database: Pool, id: string): Promise<PublicUser | null> {
+  const result = await database.query('SELECT id, email, name, role FROM users WHERE id = $1', [id])
+  return result.rows[0] ?? null
+}
+
+app.post('/api/auth/register', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const { email, password, name } = request.body as Record<string, unknown>
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || password.length < 8 ||
+      typeof name !== 'string' || !name.trim()) {
+    response.status(400).json({ error: 'Email valide, mot de passe (8 caractères min.) et nom sont requis' })
+    return
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12)
+    const result = await database.query(
+      `INSERT INTO users (email, password_hash, name)
+       VALUES ($1, $2, $3)
+       RETURNING id, email, name, role`,
+      [email.trim().toLowerCase(), passwordHash, name.trim()],
+    )
+    const user = result.rows[0] as PublicUser
+    request.session.regenerate((error) => {
+      if (error) {
+        response.status(500).json({ error: 'Unable to create session' })
+        return
+      }
+      request.session.userId = user.id
+      response.status(201).json(user)
+    })
+  } catch (error) {
+    const isUniqueViolation = typeof error === 'object' && error !== null && 'code' in error && (error as { code: string }).code === '23505'
+    if (isUniqueViolation) {
+      response.status(409).json({ error: 'Un compte existe déjà avec cet email' })
+      return
+    }
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to create account' })
+  }
+})
+
+app.post('/api/auth/login', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const { email, password } = request.body as Record<string, unknown>
+  if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
+    response.status(400).json({ error: 'Email et mot de passe requis' })
+    return
+  }
+
+  try {
+    const result = await database.query(
+      'SELECT id, email, name, role, password_hash FROM users WHERE lower(email) = lower($1)',
+      [email.trim()],
+    )
+    const user = result.rows[0] as (PublicUser & { password_hash: string | null }) | undefined
+    if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+      response.status(401).json({ error: 'Email ou mot de passe incorrect' })
+      return
+    }
+
+    request.session.regenerate((error) => {
+      if (error) {
+        response.status(500).json({ error: 'Unable to create session' })
+        return
+      }
+      request.session.userId = user.id
+      response.json({ id: user.id, email: user.email, name: user.name, role: user.role })
+    })
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to sign in' })
+  }
+})
+
+app.post('/api/auth/logout', (request, response) => {
+  request.session.destroy((error) => {
+    if (error) {
+      response.status(500).json({ error: 'Unable to sign out' })
+      return
+    }
+    response.clearCookie('print_tracker_sid')
+    response.status(204).end()
+  })
+})
+
+app.get('/api/auth/me', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  if (!request.session.userId) {
+    response.status(401).json({ error: 'Not authenticated' })
+    return
+  }
+
+  try {
+    const user = await findPublicUserById(database, request.session.userId)
+    if (!user) {
+      response.status(401).json({ error: 'Not authenticated' })
+      return
+    }
+    response.json(user)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load session' })
+  }
+})
 
 app.get('/health', async (_request, response) => {
   if (!pool) {
@@ -128,8 +184,7 @@ app.get('/health', async (_request, response) => {
   }
 })
 
-app.use('/api', (request, response, next) => requireAuth(request, response, next, authConfigured() || pool !== null))
-app.get('/api/printers', async (_request, response) => {
+app.get('/api/printers', requireAuth, async (_request, response) => {
   if (!pool) {
     response.status(503).json({ error: 'DATABASE_URL is not configured' })
     return
@@ -147,7 +202,7 @@ app.get('/api/printers', async (_request, response) => {
   }
 })
 
-app.get('/api/spools', async (_request, response) => {
+app.get('/api/spools', requireAuth, async (_request, response) => {
   const database = requirePool(response)
   if (!database) return
 
@@ -164,7 +219,7 @@ app.get('/api/spools', async (_request, response) => {
   }
 })
 
-app.post('/api/spools', async (request, response) => {
+app.post('/api/spools', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { brand, material, color, initialGrams, remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -190,7 +245,7 @@ app.post('/api/spools', async (request, response) => {
   }
 })
 
-app.patch('/api/spools/:id', async (request, response) => {
+app.patch('/api/spools/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   const { remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
@@ -224,7 +279,7 @@ app.patch('/api/spools/:id', async (request, response) => {
   }
 })
 
-app.delete('/api/spools/:id', async (request, response) => {
+app.delete('/api/spools/:id', requireAuth, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
   try {

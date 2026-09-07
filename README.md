@@ -4,54 +4,52 @@ Application web mobile-first pour suivre les imprimantes 3D et le stock de bobin
 
 ## État actuel
 
-Le dépôt contient un dashboard React/Vite responsive et un premier backend Express/PostgreSQL :
+Le dépôt contient un dashboard React/Vite responsive et un backend Express/PostgreSQL :
 
+- authentification par email + mot de passe (inscription, connexion, déconnexion) avec session serveur (cookie httpOnly, stockée en base via `connect-pg-simple`)
+- modèle `users` prévu pour une future authentification déléguée à Authentik (colonnes `auth_provider`/`external_id`)
+- toutes les routes `/api/printers` et `/api/spools` nécessitent d'être authentifié
 - Prusa XL 5 outils, Prusa Core One+ et Prusa MINI+
 - état des machines et progression d'impression
-- stock de bobines avec matière, couleur, emplacement et niveau restant
+- stock de bobines avec matière, couleur, emplacement et niveau restant, entièrement piloté par l'API (plus de données locales/mockées)
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
-- actions rapides et statistiques d'atelier
-- API `/health`, `/api/printers` et CRUD `/api/spools`
-- authentification locale (inscription, connexion, session et déconnexion) et OIDC générique compatible Authentik
-- migrations PostgreSQL dans `server/migrations/001_initial.sql` et `server/migrations/002_add_prusament_qr.sql`
+- API `/health`, `/api/auth/*` et CRUD `/api/printers` / `/api/spools`
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql` et `003_add_users.sql`
 
 ## Démarrage
 
 ```bash
 npm install
+cp .env.example .env
+```
+
+Configure `DATABASE_URL` (et `SESSION_SECRET`) dans `.env`, puis applique les migrations :
+
+```bash
+psql "$DATABASE_URL" -f server/migrations/001_initial.sql
+psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
+```
+
+Lance l'API puis le frontend (le serveur de dev Vite proxifie `/api` et `/health` vers `http://localhost:3000`) :
+
+```bash
+npm run server
 npm run dev
 ```
 
-### Tests automatiques
+Crée un compte depuis l'écran d'inscription pour accéder au tableau de bord : sans backend/PostgreSQL configuré, l'application reste bloquée sur l'écran de connexion.
 
-La suite couvre l’authentification, les endpoints API avec un pool PostgreSQL simulé, ainsi que les parcours React du tableau de bord et de gestion des bobines :
+En développement, lance `npm run server` et `npm run dev` dans deux terminaux. Ouvre ensuite l'adresse Vite affichée (généralement `http://localhost:5173`) : elle relaie automatiquement `/api` et `/health` vers l'API sur le port 3000.
 
-```bash
-npm test
-npm run test:coverage
-```
+### Authentification par email et mot de passe
 
-`npm run test:watch` lance Vitest en mode interactif.
+Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compte avec un email, un mot de passe (8 caractères minimum) et un nom affiché. Les mots de passe sont hachés avec `bcrypt` et ne sont jamais stockés en clair. La session est stockée côté serveur (cookie httpOnly `print_tracker_sid`) via `connect-pg-simple`, dans la table `session`.
 
-Pour lancer l'API :
+Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_SECURE=true` en production derrière HTTPS).
 
-```bash
-cp .env.example .env
-npm run server
-```
-
-En développement, lance les deux commandes dans deux terminaux. Ouvre ensuite l'adresse Vite affichée (généralement `http://localhost:5173`) : elle relaie automatiquement `/auth`, `/api` et `/health` vers l'API sur le port 3000.
-
-L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
-
-### Authentification locale et OIDC / Authentik
-
-Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compte local avec un nom utilisateur et un mot de passe d'au moins 10 caractères. Les mots de passe sont hachés avec `scrypt` et ne sont jamais stockés en clair. L'adresse e-mail est facultative et peut aussi servir à se connecter.
-
-L'authentification OIDC est désactivée tant que les variables `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` et `OIDC_REDIRECT_URI` ne sont pas toutes renseignées. Quand elles le sont, l'interface propose aussi Authentik et `/api/*` nécessite une session.
-
-Ajoute aussi un `SESSION_SECRET` aléatoire dans l'environnement. Le fournisseur doit autoriser l'URL de callback exacte, par exemple `https://print-tracker-dev.la-gare.net/auth/callback`. Le modèle d'environnement est dans [print-tracker-oidc.env.example](./deploy/env/print-tracker-oidc.env.example).
+La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
 
 ## Déploiement V0 sur un LXC Debian
 
@@ -61,7 +59,7 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
 - [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
-- Les migrations [003_create_users.sql](./server/migrations/003_create_users.sql) et [004_add_local_auth.sql](./server/migrations/004_add_local_auth.sql) créent le registre des comptes OIDC et locaux.
+- La migration [003_add_users.sql](./server/migrations/003_add_users.sql) crée la table `users` (avec support futur Authentik) et la table `session`.
 - [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale
