@@ -113,7 +113,7 @@ app.patch('/api/spools/:id', async (request, response) => {
            qr_url = COALESCE($3, qr_url),
            prusament_id = COALESCE($4, prusament_id)
        WHERE id = $5 AND archived_at IS NULL
-       RETURNING id, brand, material, color, remaining_grams, initial_grams, location`,
+      RETURNING id, brand, material, color, remaining_grams, initial_grams, location, qr_url, prusament_id`,
       [remainingGrams ?? null, location === undefined ? null : location.trim(),
         qrUrl === undefined ? null : qrUrl.trim(), prusamentId === undefined ? null : prusamentId.trim(), request.params.id],
     )

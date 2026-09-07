@@ -4,12 +4,11 @@ Application web mobile-first pour suivre les imprimantes 3D et le stock de bobin
 
 ## État actuel
 
-Le dépôt contient un dashboard React/Vite responsive et un premier backend Express/PostgreSQL :
+Le dépôt contient un dashboard React/Vite responsive et un backend Express/PostgreSQL :
 
-- Prusa XL 5 outils, Prusa Core One+ et Prusa MINI+
-- état des machines et progression d'impression
+- état des machines et progression d'impression depuis la base PostgreSQL
 - stock de bobines avec matière, couleur, emplacement et niveau restant
-- écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
+- écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait via l'API
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - actions rapides et statistiques d'atelier
 - API `/health`, `/api/printers` et CRUD `/api/spools`
@@ -29,7 +28,7 @@ cp .env.example .env
 npm run server
 ```
 
-L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
+L'API attend une base PostgreSQL configurée par `DATABASE_URL`. Le front charge désormais les imprimantes et bobines directement depuis l'API.
 
 ## Déploiement V0 sur un LXC Debian
 
