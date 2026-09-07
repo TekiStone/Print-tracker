@@ -23,6 +23,17 @@ npm install
 npm run dev
 ```
 
+### Tests automatiques
+
+La suite couvre l’authentification, les endpoints API avec un pool PostgreSQL simulé, ainsi que les parcours React du tableau de bord et de gestion des bobines :
+
+```bash
+npm test
+npm run test:coverage
+```
+
+`npm run test:watch` lance Vitest en mode interactif.
+
 Pour lancer l'API :
 
 ```bash

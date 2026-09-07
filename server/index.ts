@@ -6,12 +6,17 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { authConfigured, completeLogin, hashPassword, requireAuth, sessionMiddleware, startLogin, verifyPassword } from './auth.js'
 
-const app = express()
 const port = Number(process.env.PORT ?? 3000)
 const host = process.env.HOST ?? '0.0.0.0'
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+let pool: Pool | null = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const frontendDirectory = path.join(projectRoot, 'dist')
+
+export const app = express()
+
+export function setDatabasePool(database: Pool | null) {
+  pool = database
+}
 
 app.set('trust proxy', 1)
 app.use(cors())
@@ -42,8 +47,9 @@ app.post('/auth/logout', (request, response) => {
     response.clearCookie('connect.sid')
     response.status(204).end()
   })
+})
 
-  app.post('/auth/register', async (request, response, next) => {
+app.post('/auth/register', async (request, response, next) => {
     const database = requirePool(response)
     if (!database) return
     const { username, email, password } = request.body as Record<string, unknown>
@@ -71,9 +77,9 @@ app.post('/auth/logout', (request, response) => {
       }
       next(error)
     }
-  })
+})
 
-  app.post('/auth/login', async (request, response, next) => {
+app.post('/auth/login', async (request, response, next) => {
     const database = requirePool(response)
     if (!database) return
     const { identifier, password } = request.body as Record<string, unknown>
@@ -98,7 +104,6 @@ app.post('/auth/logout', (request, response) => {
     } catch (error) {
       next(error)
     }
-  })
 })
 
 function requirePool(response: express.Response): Pool | null {
@@ -242,6 +247,8 @@ app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_request, response) => {
   response.sendFile(path.join(frontendDirectory, 'index.html'))
 })
 
-app.listen(port, host, () => {
-  console.log(`Print Tracker listening on http://${host}:${port}`)
-})
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  app.listen(port, host, () => {
+    console.log(`Print Tracker listening on http://${host}:${port}`)
+  })
+}
