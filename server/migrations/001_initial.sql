@@ -38,15 +38,3 @@ CREATE TABLE IF NOT EXISTS print_jobs (
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-INSERT INTO printers (name, model, status, current_job, progress, color)
-SELECT 'Prusa XL', '5 outils', 'ready', NULL, NULL, '#f47b5f'
-WHERE NOT EXISTS (SELECT 1 FROM printers);
-
-INSERT INTO printers (name, model, status, color)
-SELECT 'Prusa Core One+', 'Core One+', 'ready', '#4b9bff'
-WHERE (SELECT count(*) FROM printers) = 1;
-
-INSERT INTO printers (name, model, status, color)
-SELECT 'Prusa MINI+', 'MINI+', 'offline', '#a58bff'
-WHERE (SELECT count(*) FROM printers) = 2;

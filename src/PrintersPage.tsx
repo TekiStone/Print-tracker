@@ -1,121 +1,253 @@
 import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { createPrinter, listPrinterJobs, listPrinters, listSpools, syncPrinterNow, updatePrinter, type PrintJob, type Printer, type PrinterPayload, type Spool } from './api'
 
-export type PrinterStatus = 'printing' | 'ready' | 'offline' | 'error'
+type FormState = PrinterPayload & { prusalinkApiKey: string }
 
-export type Printer = {
-  id: string
-  name: string
-  model: string
-  status: PrinterStatus
-  currentJob?: string | null
-  progress?: number | null
-  color: string
-  prusalinkUrl?: string | null
-  lastSeenAt?: string | null
+const emptyForm: FormState = {
+  name: '',
+  model: '',
+  color: '#f27852',
+  prusalinkUrl: '',
+  prusalinkApiKey: '',
+  prusalinkEnabled: false,
+  activeSpoolId: null,
 }
 
-type PrinterForm = Pick<Printer, 'name' | 'model' | 'status' | 'currentJob' | 'progress' | 'color' | 'prusalinkUrl'>
-type ApiPrinter = {
-  id: string
-  name: string
-  model: string
-  status: PrinterStatus
-  current_job?: string | null
-  progress?: number | null
-  color: string
-  prusalink_url?: string | null
-  last_seen_at?: string | null
+const statusLabel = {
+  printing: 'En impression',
+  ready: 'Prête',
+  offline: 'Hors ligne',
+  error: 'Erreur',
 }
 
-const initialPrinters: Printer[] = [
-  { id: 'local-xl', name: 'Prusa XL', model: '5 outils', status: 'printing', currentJob: 'Support mural', progress: 68, color: '#f47b5f' },
-  { id: 'local-core', name: 'Prusa Core One+', model: 'Core One+', status: 'ready', color: '#4b9bff' },
-  { id: 'local-mini', name: 'Prusa MINI+', model: 'MINI+', status: 'offline', color: '#a58bff' },
-]
-
-const emptyForm: PrinterForm = { name: '', model: '', status: 'ready', currentJob: '', progress: null, color: '#f27852', prusalinkUrl: '' }
-const statusLabel: Record<PrinterStatus, string> = { printing: 'En impression', ready: 'Prête', offline: 'Hors ligne', error: 'Erreur' }
-
-function readLocalPrinters() {
-  const saved = localStorage.getItem('print-tracker-printers')
-  if (!saved) return initialPrinters
-  try {
-    const parsed = JSON.parse(saved) as Printer[]
-    return Array.isArray(parsed) ? parsed : initialPrinters
-  } catch {
-    return initialPrinters
-  }
+const jobStatusLabel = {
+  queued: 'En file',
+  printing: 'En impression',
+  completed: 'Terminée',
+  failed: 'Échec',
+  cancelled: 'Annulée',
 }
 
-function saveLocalPrinters(printers: Printer[]) {
-  localStorage.setItem('print-tracker-printers', JSON.stringify(printers))
+function formatDateTime(value?: string) {
+  if (!value) return 'Jamais'
+  return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+}
+
+function formatTemperature(actual?: number, target?: number) {
+  if (actual === undefined && target === undefined) return 'n/d'
+  if (actual !== undefined && target !== undefined) return `${Math.round(actual)}° / ${Math.round(target)}°`
+  return `${Math.round(actual ?? target ?? 0)}°`
 }
 
 export function PrintersPage() {
-  const [printers, setPrinters] = useState<Printer[]>(readLocalPrinters)
-  const [form, setForm] = useState<PrinterForm>(emptyForm)
-  const [editingId, setEditingId] = useState<string | null>(null)
+  const [printers, setPrinters] = useState<Printer[]>([])
+  const [spools, setSpools] = useState<Spool[]>([])
+  const [jobsByPrinter, setJobsByPrinter] = useState<Record<string, PrintJob[]>>({})
+  const [loadingJobsFor, setLoadingJobsFor] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [editingPrinter, setEditingPrinter] = useState<Printer | null>(null)
+  const [form, setForm] = useState<FormState>(emptyForm)
   const [isFormOpen, setIsFormOpen] = useState(false)
-  const [message, setMessage] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [syncingId, setSyncingId] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/printers')
-      .then(async (response) => {
-        if (!response.ok) throw new Error('API indisponible')
-        const data = await response.json() as ApiPrinter[]
-        setPrinters(data.map((printer) => ({ id: printer.id, name: printer.name, model: printer.model, status: printer.status, progress: printer.progress, color: printer.color, currentJob: printer.current_job, prusalinkUrl: printer.prusalink_url, lastSeenAt: printer.last_seen_at })))
-      })
-      .catch(() => setMessage('Mode local : connecte une base pour synchroniser les imprimantes.'))
+    void loadPrinters()
   }, [])
 
-  function update(next: Printer[]) {
-    setPrinters(next)
-    saveLocalPrinters(next)
+  async function loadPrinters() {
+    setIsLoading(true)
+    setLoadError('')
+    try {
+      const [printersData, spoolsData] = await Promise.all([listPrinters(), listSpools()])
+      setPrinters(printersData)
+      setSpools(spoolsData)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Impossible de charger les imprimantes')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   function openCreate() {
-    setEditingId(null)
+    setEditingPrinter(null)
     setForm(emptyForm)
     setIsFormOpen(true)
   }
 
   function openEdit(printer: Printer) {
-    setEditingId(printer.id)
-    setForm({ name: printer.name, model: printer.model, status: printer.status, currentJob: printer.currentJob ?? '', progress: printer.progress ?? null, color: printer.color, prusalinkUrl: printer.prusalinkUrl ?? '' })
+    setEditingPrinter(printer)
+    setForm({
+      name: printer.name,
+      model: printer.model,
+      color: printer.color,
+      prusalinkUrl: printer.prusalinkUrl ?? '',
+      prusalinkApiKey: '',
+      prusalinkEnabled: printer.prusalinkEnabled,
+      activeSpoolId: printer.activeSpoolId ?? null,
+    })
     setIsFormOpen(true)
   }
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!form.name.trim() || !form.model.trim() || (form.status === 'printing' && (!form.currentJob?.trim() || form.progress == null || form.progress < 0 || form.progress > 100))) return
-    const normalized = { ...form, name: form.name.trim(), model: form.model.trim(), currentJob: form.status === 'printing' ? form.currentJob?.trim() : null, progress: form.status === 'printing' ? form.progress : null }
-    update(editingId
-      ? printers.map((printer) => printer.id === editingId ? { ...printer, ...normalized } : printer)
-      : [{ ...normalized, id: `local-${Date.now()}` }, ...printers])
-    setIsFormOpen(false)
+  async function submit() {
+    if (!form.name.trim() || !form.model.trim() || !form.color.trim()) return
+    if (form.prusalinkEnabled && (!form.prusalinkUrl?.trim() || (!editingPrinter && !form.prusalinkApiKey.trim()))) return
+
+    setIsSaving(true)
+    setLoadError('')
+
+    try {
+      const payload: Partial<PrinterPayload> = {
+        name: form.name.trim(),
+        model: form.model.trim(),
+        color: form.color.trim(),
+        prusalinkUrl: form.prusalinkUrl?.trim() || undefined,
+        prusalinkEnabled: form.prusalinkEnabled,
+        activeSpoolId: form.activeSpoolId ?? null,
+      }
+
+      if (form.prusalinkApiKey.trim()) payload.prusalinkApiKey = form.prusalinkApiKey.trim()
+
+      const printer = editingPrinter
+        ? await updatePrinter(editingPrinter.id, payload)
+        : await createPrinter(payload as PrinterPayload)
+
+      setPrinters((current) => editingPrinter
+        ? current.map((item) => item.id === printer.id ? printer : item)
+        : [...current, printer])
+      setIsFormOpen(false)
+      setEditingPrinter(null)
+      setForm(emptyForm)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Impossible d’enregistrer l’imprimante')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
-  function remove(id: string) {
-    if (window.confirm('Retirer cette imprimante ?')) update(printers.filter((printer) => printer.id !== id))
+  async function sync(printerId: string) {
+    setSyncingId(printerId)
+    setLoadError('')
+    try {
+      const printer = await syncPrinterNow(printerId)
+      setPrinters((current) => current.map((item) => item.id === printer.id ? printer : item))
+      await showJobs(printerId)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Impossible de synchroniser l’imprimante')
+    } finally {
+      setSyncingId(null)
+    }
+  }
+
+  async function showJobs(printerId: string) {
+    setLoadingJobsFor(printerId)
+    try {
+      const jobs = await listPrinterJobs(printerId)
+      setJobsByPrinter((current) => ({ ...current, [printerId]: jobs }))
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Impossible de charger l’historique')
+    } finally {
+      setLoadingJobsFor(null)
+    }
   }
 
   return (
     <div className="content printer-page">
       <div className="page-heading">
-        <div><p className="eyebrow">GESTION DU PARC</p><h1>Tes imprimantes</h1><p className="subtitle">Gère tes machines et suis leur état.</p></div>
+        <div><p className="eyebrow">PRUSALINK</p><h1>Imprimantes</h1><p className="subtitle">Configure les accès, lance une synchro et consulte l’état remonté par PrusaLink.</p></div>
         <button type="button" className="primary-button" onClick={openCreate}><span>+</span> Ajouter une imprimante</button>
       </div>
-      {message && <p className="inline-message">{message}</p>}
+
+      {loadError && <div className="page-message page-message--error">{loadError}</div>}
+      {isLoading && <div className="page-message">Chargement des imprimantes…</div>}
+
       <section className="managed-printers">
-        {printers.map((printer) => <article className="managed-printer" key={printer.id}>
-          <div className="managed-printer__header"><div className="printer-avatar" style={{ background: printer.color }}>▣</div><div><h3>{printer.name}</h3><p>{printer.model}</p></div><span className={`status status--${printer.status}`}><span />{statusLabel[printer.status]}</span></div>
-          {printer.status === 'printing' ? <><div className="job__row"><span>{printer.currentJob}</span><strong>{printer.progress}%</strong></div><div className="progress"><span style={{ width: `${printer.progress}%` }} /></div></> : <p className="printer-detail">{printer.status === 'ready' ? 'Aucun travail en attente' : printer.status === 'offline' ? 'Machine hors ligne' : 'Une erreur nécessite ton attention'}</p>}
-          <div className="managed-spool__actions"><button type="button" className="text-button" onClick={() => openEdit(printer)}>Modifier</button><button type="button" className="danger-button" onClick={() => remove(printer.id)}>Retirer</button></div>
-        </article>)}
-        {printers.length === 0 && <div className="empty-spools">Aucune imprimante. Ajoute ta première machine.</div>}
+        {!isLoading && printers.length === 0 && <div className="empty-panel">Aucune imprimante configurée.</div>}
+        {printers.map((printer) => (
+          <article key={printer.id} className="managed-printer">
+            <div className="managed-printer__header">
+              <div className="printer-avatar" style={{ background: printer.color }}>▣</div>
+              <div>
+                <h3>{printer.name}</h3>
+                <p>{printer.model}</p>
+              </div>
+              <span className={`status status--${printer.status}`}><span />{statusLabel[printer.status]}</span>
+            </div>
+
+            <div className="managed-printer__meta">
+              <span><b>PrusaLink</b>{printer.prusalinkEnabled ? 'Activé' : 'Désactivé'}</span>
+              <span><b>URL</b>{printer.prusalinkUrl || 'Non configurée'}</span>
+              <span><b>Bobine active</b>{printer.activeSpoolLabel || 'Non assignée'}</span>
+              <span><b>Assignée le</b>{formatDateTime(printer.activeSpoolAssignedAt)}</span>
+              <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
+              <span><b>Dernière activité</b>{formatDateTime(printer.lastSeenAt)}</span>
+              <span><b>Buse</b>{formatTemperature(printer.nozzleTemperature, printer.nozzleTargetTemperature)}</span>
+              <span><b>Plateau</b>{formatTemperature(printer.bedTemperature, printer.bedTargetTemperature)}</span>
+              <span><b>Travail</b>{printer.job || 'Aucun'}</span>
+              <span><b>Progression</b>{printer.progress !== undefined ? `${printer.progress}%` : 'n/d'}</span>
+            </div>
+
+            {(printer.firmwareVersion || printer.prusalinkVersion) && (
+              <p className="printer-version">Firmware {printer.firmwareVersion || 'n/d'} · PrusaLink {printer.prusalinkVersion || 'n/d'}</p>
+            )}
+
+            {printer.lastSyncError && <p className="printer-error">Dernière erreur : {printer.lastSyncError}</p>}
+
+            <div className="managed-printer__actions">
+              <button type="button" className="text-button" onClick={() => openEdit(printer)}>Modifier</button>
+              <button type="button" className="text-button" onClick={() => void showJobs(printer.id)}>{loadingJobsFor === printer.id ? 'Chargement…' : 'Historique'}</button>
+              <button type="button" className="primary-button primary-button--small" disabled={!printer.prusalinkEnabled || syncingId === printer.id} onClick={() => void sync(printer.id)}>
+                {syncingId === printer.id ? 'Synchronisation…' : 'Synchroniser'}
+              </button>
+            </div>
+
+            {jobsByPrinter[printer.id] && (
+              <div className="printer-jobs">
+                <h4>Dernières impressions</h4>
+                {jobsByPrinter[printer.id].length === 0
+                  ? <p className="printer-jobs__empty">Aucune impression enregistrée.</p>
+                  : jobsByPrinter[printer.id].map((job) => (
+                    <div className="printer-job" key={job.id}>
+                      <div>
+                        <strong>{job.name}</strong>
+                        <small>{job.externalJobPath || job.source}{job.estimatedFilamentGrams !== undefined ? ` · ${job.estimatedFilamentGrams} g estimés` : ''}{job.spoolLabel ? ` · ${job.spoolLabel}` : ''}</small>
+                      </div>
+                      <div>
+                        <span>{jobStatusLabel[job.status]}</span>
+                        <small>{formatDateTime(job.completedAt ?? job.startedAt)}</small>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </article>
+        ))}
       </section>
-      {isFormOpen && <div className="modal-backdrop" role="presentation"><form className="spool-form" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">{editingId ? 'MODIFICATION' : 'NOUVELLE IMPRIMANTE'}</p><h2>{editingId ? 'Modifier l’imprimante' : 'Ajouter une imprimante'}</h2></div><button type="button" className="close-button" onClick={() => setIsFormOpen(false)}>×</button></div><label>Nom<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ex. Prusa XL" /></label><label>Modèle<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="Ex. 5 outils" /></label><div className="form-grid"><label>État<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as PrinterStatus })}>{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Couleur<input type="color" value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} /></label></div>{form.status === 'printing' && <div className="form-grid"><label>Travail en cours<input required value={form.currentJob ?? ''} onChange={(event) => setForm({ ...form, currentJob: event.target.value })} /></label><label>Progression (%)<input required type="number" min="0" max="100" value={form.progress ?? ''} onChange={(event) => setForm({ ...form, progress: event.target.value === '' ? null : Number(event.target.value) })} /></label></div>}<label>URL PrusaLink <input type="url" value={form.prusalinkUrl ?? ''} onChange={(event) => setForm({ ...form, prusalinkUrl: event.target.value })} placeholder="https://..." /></label><button type="submit" className="primary-button form-submit">Enregistrer</button></form></div>}
+
+      {isFormOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="spool-form">
+            <div className="modal-heading">
+              <div><p className="eyebrow">{editingPrinter ? 'MODIFICATION' : 'NOUVELLE IMPRIMANTE'}</p><h2>{editingPrinter ? 'Modifier l’imprimante' : 'Ajouter une imprimante'}</h2></div>
+              <button type="button" className="close-button" onClick={() => setIsFormOpen(false)}>×</button>
+            </div>
+            <label>Nom<input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Ex. Prusa XL" /></label>
+            <div className="form-grid">
+              <label>Modèle<input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="Ex. XL 5T" /></label>
+              <label>Couleur<input required value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} placeholder="#f27852" /></label>
+            </div>
+            <label>URL PrusaLink<input value={form.prusalinkUrl} onChange={(event) => setForm({ ...form, prusalinkUrl: event.target.value })} placeholder="http://192.168.1.42" /></label>
+            <label>Clé API PrusaLink<input type="password" value={form.prusalinkApiKey} onChange={(event) => setForm({ ...form, prusalinkApiKey: event.target.value })} placeholder={editingPrinter ? 'Laisser vide pour conserver la clé' : 'Clé API'} /></label>
+            <label>Bobine active<select value={form.activeSpoolId ?? ''} onChange={(event) => setForm({ ...form, activeSpoolId: event.target.value || null })}><option value="">Aucune</option>{spools.map((spool) => <option key={spool.id} value={spool.id}>{`${spool.brand} ${spool.material} · ${spool.color}`}</option>)}</select></label>
+            <label className="checkbox-field"><input type="checkbox" checked={form.prusalinkEnabled} onChange={(event) => setForm({ ...form, prusalinkEnabled: event.target.checked })} />Activer la synchronisation automatique</label>
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setIsFormOpen(false)}>Annuler</button>
+              <button type="button" className="primary-button" disabled={isSaving} onClick={() => void submit()}>{isSaving ? 'Enregistrement…' : editingPrinter ? 'Enregistrer' : 'Ajouter'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -9,13 +9,15 @@ Le dépôt contient un dashboard React/Vite responsive et un backend Express/Pos
 - authentification par email + mot de passe (inscription, connexion, déconnexion) avec session serveur (cookie httpOnly, stockée en base via `connect-pg-simple`)
 - modèle `users` prévu pour une future authentification déléguée à Authentik (colonnes `auth_provider`/`external_id`)
 - toutes les routes `/api/printers` et `/api/spools` nécessitent d'être authentifié
-- Prusa XL 5 outils, Prusa Core One+ et Prusa MINI+
-- état des machines et progression d'impression
-- stock de bobines avec matière, couleur, emplacement et niveau restant, entièrement piloté par l'API (plus de données locales/mockées)
+- état des machines et progression d'impression depuis la base PostgreSQL et PrusaLink
+- synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur et historique des impressions
+- liaison d’une bobine active par imprimante, avec décrément automatique du stock à la fin d’une impression PrusaLink lorsque le G-code expose `filament used [g]`
+- stock de bobines avec matière, couleur, emplacement et niveau restant, entièrement piloté par l'API
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
+- écran de gestion des imprimantes avec configuration PrusaLink, synchronisation manuelle, bobine active et historique récent
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - API `/health`, `/api/auth/*` et CRUD `/api/printers` / `/api/spools`
-- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql` et `003_add_users.sql`
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql`, `003_add_users.sql`, `003_add_prusalink_sync.sql` et `004_link_prusalink_spools.sql`
 
 ## Démarrage
 
@@ -24,12 +26,14 @@ npm install
 cp .env.example .env
 ```
 
-Configure `DATABASE_URL` (et `SESSION_SECRET`) dans `.env`, puis applique les migrations :
+Configure `DATABASE_URL`, `SESSION_SECRET` et si besoin les variables PrusaLink dans `.env`, puis applique les migrations :
 
 ```bash
 psql "$DATABASE_URL" -f server/migrations/001_initial.sql
 psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
 psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
+psql "$DATABASE_URL" -f server/migrations/004_link_prusalink_spools.sql
 ```
 
 Lance l'API puis le frontend (le serveur de dev Vite proxifie `/api` et `/health` vers `http://localhost:3000`) :
@@ -51,6 +55,12 @@ Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_S
 
 La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
 
+### Intégration PrusaLink
+
+Configure `PRUSALINK_SYNC_INTERVAL_MS` pour la fréquence de synchronisation et `PRUSALINK_REQUEST_TIMEOUT_MS` pour le timeout réseau.
+Les clés API PrusaLink sont stockées uniquement côté backend et ne sont jamais renvoyées au frontend.
+Pour imputer automatiquement la consommation de filament, assigne une bobine active à chaque imprimante depuis l’écran Imprimantes.
+
 ## Déploiement V0 sur un LXC Debian
 
 Le dépôt fournit un service API, un script de mise à jour et des timers systemd. La configuration recommandée héberge deux instances sur le même LXC :
@@ -59,7 +69,7 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
 - [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
-- La migration [003_add_users.sql](./server/migrations/003_add_users.sql) crée la table `users` (avec support futur Authentik) et la table `session`.
+- Les migrations [003_add_users.sql](./server/migrations/003_add_users.sql), [003_add_prusalink_sync.sql](./server/migrations/003_add_prusalink_sync.sql) et [004_link_prusalink_spools.sql](./server/migrations/004_link_prusalink_spools.sql) ajoutent l’authentification, la synchronisation PrusaLink et l’imputation automatique de filament.
 - [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale

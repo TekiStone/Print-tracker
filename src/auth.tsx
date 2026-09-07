@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import { getCsrfToken } from './csrf'
 
 export type User = { id: string; email: string; name: string; role: string }
 
@@ -49,10 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     setError('')
+    const csrfToken = await getCsrfToken()
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ email, password }),
     })
     const body = await parseJson(response)
@@ -66,10 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (email: string, password: string, name: string) => {
     setError('')
+    const csrfToken = await getCsrfToken()
     const response = await fetch('/api/auth/register', {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken },
       body: JSON.stringify({ email, password, name }),
     })
     const body = await parseJson(response)
@@ -82,7 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+    const csrfToken = await getCsrfToken()
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'x-csrf-token': csrfToken },
+    })
     setUser(null)
     setStatus('unauthenticated')
   }, [])
