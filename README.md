@@ -13,7 +13,7 @@ Le dépôt contient un dashboard React/Vite responsive et un premier backend Exp
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - actions rapides et statistiques d'atelier
 - API `/health`, `/api/printers` et CRUD `/api/spools`
-- authentification OIDC générique compatible Authentik, session utilisateur et déconnexion
+- authentification locale (inscription, connexion, session et déconnexion) et OIDC générique compatible Authentik
 - migrations PostgreSQL dans `server/migrations/001_initial.sql` et `server/migrations/002_add_prusament_qr.sql`
 
 ## Démarrage
@@ -32,9 +32,11 @@ npm run server
 
 L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
 
-### Authentification OIDC / Authentik
+### Authentification locale et OIDC / Authentik
 
-L'authentification est désactivée tant que les variables `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` et `OIDC_REDIRECT_URI` ne sont pas toutes renseignées. Quand elles le sont, `/api/*` nécessite une session OIDC et l'interface affiche le bouton de connexion.
+Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compte local avec un nom utilisateur et un mot de passe d'au moins 10 caractères. Les mots de passe sont hachés avec `scrypt` et ne sont jamais stockés en clair. L'adresse e-mail est facultative et peut aussi servir à se connecter.
+
+L'authentification OIDC est désactivée tant que les variables `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` et `OIDC_REDIRECT_URI` ne sont pas toutes renseignées. Quand elles le sont, l'interface propose aussi Authentik et `/api/*` nécessite une session.
 
 Ajoute aussi un `SESSION_SECRET` aléatoire dans l'environnement. Le fournisseur doit autoriser l'URL de callback exacte, par exemple `https://print-tracker-dev.la-gare.net/auth/callback`. Le modèle d'environnement est dans [print-tracker-oidc.env.example](./deploy/env/print-tracker-oidc.env.example).
 
@@ -46,7 +48,7 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
 - [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
-- La migration [003_create_users.sql](./server/migrations/003_create_users.sql) crée le registre local des comptes OIDC.
+- Les migrations [003_create_users.sql](./server/migrations/003_create_users.sql) et [004_add_local_auth.sql](./server/migrations/004_add_local_auth.sql) créent le registre des comptes OIDC et locaux.
 - [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale
