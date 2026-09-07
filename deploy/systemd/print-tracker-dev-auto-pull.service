@@ -1,0 +1,13 @@
+[Unit]
+Description=Update and rebuild Print Tracker DEV from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/print-tracker-dev
+Environment=APP_DIR=/opt/print-tracker-dev
+Environment=BRANCH=develop
+Environment=SERVICE_NAME=print-tracker-dev.service
+ExecStart=/opt/print-tracker-dev/deploy/scripts/auto-pull.sh

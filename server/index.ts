@@ -1,0 +1,150 @@
+import 'dotenv/config'
+import cors from 'cors'
+import express from 'express'
+import { Pool } from 'pg'
+
+const app = express()
+const port = Number(process.env.PORT ?? 3000)
+const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+
+app.use(cors())
+app.use(express.json())
+
+function requirePool(response: express.Response): Pool | null {
+  if (!pool) {
+    response.status(503).json({ error: 'DATABASE_URL is not configured' })
+    return null
+  }
+  return pool
+}
+
+app.get('/health', async (_request, response) => {
+  if (!pool) {
+    response.status(503).json({ status: 'unconfigured', database: false })
+    return
+  }
+
+  try {
+    await pool.query('SELECT 1')
+    response.json({ status: 'ok', database: true })
+  } catch (error) {
+    response.status(503).json({ status: 'degraded', database: false, error: error instanceof Error ? error.message : 'Database unavailable' })
+  }
+})
+
+app.get('/api/printers', async (_request, response) => {
+  if (!pool) {
+    response.status(503).json({ error: 'DATABASE_URL is not configured' })
+    return
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT id, name, model, status, current_job, progress, color, last_seen_at
+      FROM printers
+      ORDER BY created_at
+    `)
+    response.json(result.rows)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load printers' })
+  }
+})
+
+app.get('/api/spools', async (_request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    const result = await database.query(`
+      SELECT id, brand, material, color, remaining_grams, initial_grams, location, qr_url, prusament_id
+      FROM spools
+      WHERE archived_at IS NULL
+      ORDER BY created_at DESC
+    `)
+    response.json(result.rows)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load spools' })
+  }
+})
+
+app.post('/api/spools', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const { brand, material, color, initialGrams, remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
+  if (typeof brand !== 'string' || !brand.trim() || typeof material !== 'string' || !material.trim() ||
+      typeof color !== 'string' || !color.trim() || typeof initialGrams !== 'number' ||
+      !Number.isInteger(initialGrams) || initialGrams <= 0 || typeof remainingGrams !== 'number' ||
+      !Number.isInteger(remainingGrams) || remainingGrams < 0 || remainingGrams > initialGrams) {
+    response.status(400).json({ error: 'Invalid spool data' })
+    return
+  }
+
+  try {
+    const result = await database.query(
+      `INSERT INTO spools (brand, material, color, initial_grams, remaining_grams, location, qr_url, prusament_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, brand, material, remaining_grams, initial_grams, color, location, qr_url, prusament_id`,
+      [brand.trim(), material.trim(), color.trim(), initialGrams, remainingGrams, typeof location === 'string' ? location.trim() : null,
+        typeof qrUrl === 'string' ? qrUrl.trim() : null, typeof prusamentId === 'string' ? prusamentId.trim() : null],
+    )
+    response.status(201).json(result.rows[0])
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to create spool' })
+  }
+})
+
+app.patch('/api/spools/:id', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const { remainingGrams, location, qrUrl, prusamentId } = request.body as Record<string, unknown>
+  if ((remainingGrams !== undefined && (typeof remainingGrams !== 'number' || !Number.isInteger(remainingGrams) || remainingGrams < 0)) ||
+      (location !== undefined && typeof location !== 'string') ||
+      (qrUrl !== undefined && typeof qrUrl !== 'string') ||
+      (prusamentId !== undefined && typeof prusamentId !== 'string')) {
+    response.status(400).json({ error: 'Invalid spool update' })
+    return
+  }
+
+  try {
+    const result = await database.query(
+      `UPDATE spools
+       SET remaining_grams = COALESCE($1, remaining_grams),
+           location = COALESCE($2, location),
+           qr_url = COALESCE($3, qr_url),
+           prusament_id = COALESCE($4, prusament_id)
+       WHERE id = $5 AND archived_at IS NULL
+       RETURNING id, brand, material, color, remaining_grams, initial_grams, location`,
+      [remainingGrams ?? null, location === undefined ? null : location.trim(),
+        qrUrl === undefined ? null : qrUrl.trim(), prusamentId === undefined ? null : prusamentId.trim(), request.params.id],
+    )
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: 'Spool not found' })
+      return
+    }
+    response.json(result.rows[0])
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to update spool' })
+  }
+})
+
+app.delete('/api/spools/:id', async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  try {
+    const result = await database.query(
+      `UPDATE spools SET archived_at = now() WHERE id = $1 AND archived_at IS NULL RETURNING id`,
+      [request.params.id],
+    )
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: 'Spool not found' })
+      return
+    }
+    response.status(204).end()
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to archive spool' })
+  }
+})
+
+app.listen(port, () => {
+  console.log(`Print Tracker API listening on port ${port}`)
+})

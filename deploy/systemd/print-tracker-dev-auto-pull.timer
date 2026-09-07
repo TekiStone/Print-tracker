@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Print Tracker DEV for updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=print-tracker-dev-auto-pull.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

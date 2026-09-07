@@ -1,0 +1,19 @@
+[Unit]
+Description=Print Tracker API - PROD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=print-tracker-prod
+Group=print-tracker-prod
+WorkingDirectory=/opt/print-tracker-prod
+EnvironmentFile=/etc/print-tracker-prod.env
+ExecStart=/usr/bin/npm run server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
