@@ -1,17 +1,4 @@
 print-tracker-dev.example.com {
     encode gzip
-
-    handle /api/* {
-        reverse_proxy 127.0.0.1:3001
-    }
-
-    handle /health {
-        reverse_proxy 127.0.0.1:3001
-    }
-
-    handle {
-        root * /opt/print-tracker-dev/dist
-        try_files {path} /index.html
-        file_server
-    }
+    reverse_proxy 192.168.0.142:3001
 }

@@ -5,6 +5,8 @@ import cors from 'cors'
 import express from 'express'
 import session from 'express-session'
 import { Pool } from 'pg'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 declare module 'express-session' {
   interface SessionData {
@@ -12,10 +14,18 @@ declare module 'express-session' {
   }
 }
 
-const app = express()
 const port = Number(process.env.PORT ?? 3000)
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
+const host = process.env.HOST ?? '0.0.0.0'
+let pool: Pool | null = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null
 const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:5173'
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const frontendDirectory = path.join(projectRoot, 'dist')
+
+export const app = express()
+
+export function setDatabasePool(database: Pool | null) {
+  pool = database
+}
 
 app.set('trust proxy', 1)
 app.use(cors({ origin: webOrigin, credentials: true }))
@@ -287,6 +297,13 @@ app.delete('/api/spools/:id', requireAuth, async (request, response) => {
   }
 })
 
-app.listen(port, () => {
-  console.log(`Print Tracker API listening on port ${port}`)
+app.use(express.static(frontendDirectory))
+app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_request, response) => {
+  response.sendFile(path.join(frontendDirectory, 'index.html'))
 })
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  app.listen(port, host, () => {
+    console.log(`Print Tracker listening on http://${host}:${port}`)
+  })
+}

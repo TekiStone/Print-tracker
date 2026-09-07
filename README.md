@@ -41,6 +41,15 @@ npm run dev
 
 Crée un compte depuis l'écran d'inscription pour accéder au tableau de bord : sans backend/PostgreSQL configuré, l'application reste bloquée sur l'écran de connexion.
 
+En développement, lance `npm run server` et `npm run dev` dans deux terminaux. Ouvre ensuite l'adresse Vite affichée (généralement `http://localhost:5173`) : elle relaie automatiquement `/api` et `/health` vers l'API sur le port 3000.
+
+### Authentification par email et mot de passe
+
+Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compte avec un email, un mot de passe (8 caractères minimum) et un nom affiché. Les mots de passe sont hachés avec `bcrypt` et ne sont jamais stockés en clair. La session est stockée côté serveur (cookie httpOnly `print_tracker_sid`) via `connect-pg-simple`, dans la table `session`.
+
+Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_SECURE=true` en production derrière HTTPS).
+
+La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
 
 ## Déploiement V0 sur un LXC Debian
 
@@ -49,7 +58,9 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - DEV : `/opt/print-tracker-dev`, branche `develop`, API sur `3001`, service `print-tracker-dev.service`.
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
-- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build puis redémarre uniquement l'instance concernée.
+- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
+- La migration [003_add_users.sql](./server/migrations/003_add_users.sql) crée la table `users` (avec support futur Authentik) et la table `session`.
+- [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale
 
@@ -80,15 +91,18 @@ nano /etc/print-tracker-dev.env
 nano /etc/print-tracker-prod.env
 ```
 
-Applique les migrations PostgreSQL dans l'ordre :
+Applique les migrations PostgreSQL (une seule fois, exécutable de nouveau sans risque) :
 
 ```bash
-set -a
-. /etc/print-tracker-prod.env
-set +a
-psql "$DATABASE_URL" -f server/migrations/001_initial.sql
-psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
-psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
+cd /opt/print-tracker-dev
+set -a; . /etc/print-tracker-dev.env; set +a
+npm ci
+npm run migrate
+
+cd /opt/print-tracker-prod
+set -a; . /etc/print-tracker-prod.env; set +a
+npm ci
+npm run migrate
 ```
 
 Active les services :
@@ -118,11 +132,11 @@ curl http://127.0.0.1:3001/health
 curl http://127.0.0.1:3000/health
 ```
 
-Le timer ne redéploie que si `origin/master` a changé. En cas d'échec du lint ou du build, le service en cours n'est pas redémarré.
+Le timer ne redéploie que si la branche distante a changé. En cas d'échec du lint, du build ou d'une migration, le script s'arrête (`set -e`) et le service en cours n'est pas redémarré.
 
 ### Publication avec Caddy
 
-Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) servent les deux builds et transmettent `/api` aux bons ports. Remplace les domaines, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
+Les fichiers [print-tracker-dev.example.caddy](./deploy/caddy/print-tracker-dev.example.caddy) et [print-tracker-prod.example.caddy](./deploy/caddy/print-tracker-prod.example.caddy) transmettent chaque domaine au service Node correspondant. Le service Node sert à la fois le build React et `/api`. Remplace les domaines et l'adresse IP du LXC, copie-les dans le Caddyfile du reverse-proxy, puis recharge Caddy :
 
 ```bash
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile

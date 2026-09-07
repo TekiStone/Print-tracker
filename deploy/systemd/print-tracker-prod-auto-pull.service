@@ -10,4 +10,5 @@ WorkingDirectory=/opt/print-tracker-prod
 Environment=APP_DIR=/opt/print-tracker-prod
 Environment=BRANCH=master
 Environment=SERVICE_NAME=print-tracker-prod.service
+EnvironmentFile=/etc/print-tracker-prod.env
 ExecStart=/opt/print-tracker-prod/deploy/scripts/auto-pull.sh
