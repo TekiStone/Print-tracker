@@ -4,7 +4,7 @@ import express from 'express'
 import { Pool } from 'pg'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { authConfigured, completeLogin, requireAuth, sessionMiddleware, startLogin } from './auth.js'
+import { authConfigured, completeLogin, hashPassword, requireAuth, sessionMiddleware, startLogin, verifyPassword } from './auth.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3000)
@@ -18,7 +18,7 @@ app.use(cors())
 app.use(sessionMiddleware())
 app.use(express.json())
 
-app.get('/auth/config', (_request, response) => response.json({ enabled: authConfigured() }))
+app.get('/auth/config', (_request, response) => response.json({ enabled: authConfigured() || pool !== null, oidc: authConfigured() }))
 app.get('/auth/login', async (request, response, next) => {
   try { await startLogin(request, response) } catch (error) { next(error) }
 })
@@ -41,6 +41,63 @@ app.post('/auth/logout', (request, response) => {
     if (error) { response.status(500).json({ error: 'Unable to logout' }); return }
     response.clearCookie('connect.sid')
     response.status(204).end()
+  })
+
+  app.post('/auth/register', async (request, response, next) => {
+    const database = requirePool(response)
+    if (!database) return
+    const { username, email, password } = request.body as Record<string, unknown>
+    if (typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{3,32}$/.test(username) ||
+        (email !== undefined && typeof email !== 'string') ||
+        typeof password !== 'string' || password.length < 10) {
+      response.status(400).json({ error: 'Nom utilisateur ou mot de passe invalide' })
+      return
+    }
+    try {
+      const passwordHash = await hashPassword(password)
+      const result = await database.query<{ id: string; username: string; email: string | null }>(
+        `INSERT INTO users (oidc_subject, username, email, password_hash)
+         VALUES (NULL, $1, $2, $3)
+         RETURNING id, username, email`,
+        [username.trim(), typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null, passwordHash],
+      )
+      const user = result.rows[0]
+      request.session.user = { subject: `local:${user.id}`, username: user.username, email: user.email ?? undefined }
+      response.status(201).json({ user: request.session.user })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error as { code?: string }).code === '23505') {
+        response.status(409).json({ error: 'Nom utilisateur ou adresse e-mail déjà utilisé' })
+        return
+      }
+      next(error)
+    }
+  })
+
+  app.post('/auth/login', async (request, response, next) => {
+    const database = requirePool(response)
+    if (!database) return
+    const { identifier, password } = request.body as Record<string, unknown>
+    if (typeof identifier !== 'string' || typeof password !== 'string' || !identifier.trim() || !password) {
+      response.status(400).json({ error: 'Identifiants invalides' })
+      return
+    }
+    try {
+      const result = await database.query<{ id: string; username: string; email: string | null; password_hash: string | null }>(
+        `SELECT id, username, email, password_hash FROM users
+         WHERE lower(username) = lower($1) OR lower(email) = lower($1)
+         LIMIT 1`,
+        [identifier.trim()],
+      )
+      const account = result.rows[0]
+      if (!account?.password_hash || !(await verifyPassword(password, account.password_hash))) {
+        response.status(401).json({ error: 'Identifiants invalides' })
+        return
+      }
+      request.session.user = { subject: `local:${account.id}`, username: account.username, email: account.email ?? undefined }
+      response.json({ user: request.session.user })
+    } catch (error) {
+      next(error)
+    }
   })
 })
 
@@ -66,7 +123,7 @@ app.get('/health', async (_request, response) => {
   }
 })
 
-app.use('/api', requireAuth)
+app.use('/api', (request, response, next) => requireAuth(request, response, next, authConfigured() || pool !== null))
 app.get('/api/printers', async (_request, response) => {
   if (!pool) {
     response.status(503).json({ error: 'DATABASE_URL is not configured' })

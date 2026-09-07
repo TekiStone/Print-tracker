@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
 import { SpoolsPage } from './SpoolsPage'
 
 type PrinterStatus = 'printing' | 'ready' | 'offline'
@@ -71,9 +72,50 @@ function PrinterCard({ printer }: { printer: Printer }) {
   )
 }
 
+function AuthPage({ oidc }: { oidc: boolean }) {
+  const [register, setRegister] = useState(false)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    const values = Object.fromEntries(new FormData(event.currentTarget))
+    const response = await fetch(register ? '/auth/register' : '/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(register
+        ? { username: values.username, email: values.email, password: values.password }
+        : { identifier: values.identifier, password: values.password }),
+    })
+    if (!response.ok) {
+      const result = await response.json() as { error?: string }
+      setError(result.error ?? 'Impossible de traiter la demande')
+      setBusy(false)
+      return
+    }
+    window.location.reload()
+  }
+
+  return <div className="login-page"><div className="login-card">
+    <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
+    <h1>{register ? 'Créer ton compte' : 'Ton atelier, au même endroit'}</h1>
+    <p>{register ? 'Inscris-toi pour accéder à tes imprimantes et tes bobines.' : 'Connecte-toi pour accéder à ton atelier.'}</p>
+    <form className="auth-form" onSubmit={submit}>
+      {register ? <><label>Nom utilisateur<input name="username" required minLength={3} maxLength={32} pattern="[a-zA-Z0-9_.-]+" autoComplete="username" /></label><label>E-mail (facultatif)<input name="email" type="email" autoComplete="email" /></label></> : <label>Nom utilisateur ou e-mail<input name="identifier" required autoComplete="username" /></label>}
+      <label>Mot de passe<input name="password" type="password" required minLength={10} autoComplete={register ? 'new-password' : 'current-password'} /><small>10 caractères minimum</small></label>
+      {error && <p className="auth-error">{error}</p>}
+      <button className="primary-button login-button" disabled={busy}>{register ? "S'inscrire" : 'Se connecter'}</button>
+    </form>
+    <button type="button" className="text-button auth-switch" onClick={() => { setRegister(!register); setError('') }}>{register ? 'J’ai déjà un compte' : 'Créer un compte'}</button>
+    {oidc && <a className="oidc-link" href="/auth/login">Se connecter avec Authentik</a>}
+  </div></div>
+}
+
 export function App() {
   const [activeNav, setActiveNav] = useState('Vue d’ensemble')
-  const [auth, setAuth] = useState<{ enabled: boolean; authenticated: boolean; user: { name?: string; username: string; picture?: string } | null } | null>(null)
+  const [auth, setAuth] = useState<{ enabled: boolean; oidc?: boolean; authenticated: boolean; user: { name?: string; username: string; picture?: string } | null } | null>(null)
 
   useEffect(() => {
     fetch('/auth/config').then((configResponse) => configResponse.json() as Promise<{ enabled: boolean }>)
@@ -82,7 +124,7 @@ export function App() {
   }, [])
 
   if (auth?.enabled && !auth.authenticated) {
-    return <div className="login-page"><div className="login-card"><div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div><h1>Ton atelier, au même endroit</h1><p>Connecte-toi pour accéder à tes imprimantes et tes bobines.</p><a className="primary-button login-button" href="/auth/login">Se connecter</a></div></div>
+    return <AuthPage oidc={Boolean(auth.oidc)} />
   }
 
   const accountName = auth?.user?.name ?? auth?.user?.username ?? 'Thomas'
