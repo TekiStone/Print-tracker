@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { SpoolsPage } from './SpoolsPage'
 import { LoginPage } from './LoginPage'
 import { useAuth } from './auth'
+import { PrintersPage } from './PrintersPage'
 
 type PrinterStatus = 'printing' | 'ready' | 'offline' | 'error'
 
@@ -168,9 +169,9 @@ export function App() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
         <nav>
-          {['Vue d’ensemble', 'Bobines'].map((item) => (
+          {['Vue d’ensemble', 'Imprimantes', 'Bobines'].map((item) => (
             <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => setActiveNav(item)}>
-              <Icon>{item === 'Vue d’ensemble' ? '⌂' : '◉'}</Icon>{item}
+              <Icon>{item === 'Vue d’ensemble' ? '⌂' : item === 'Imprimantes' ? '▣' : '◉'}</Icon>{item}
             </button>
           ))}
         </nav>
@@ -186,7 +187,7 @@ export function App() {
           <button type="button" className="text-button" onClick={() => logout()}>Déconnexion</button>
         </header>
 
-        {activeNav === 'Bobines' ? <SpoolsPage /> : <Dashboard user={user} />}
+        {activeNav === 'Bobines' ? <SpoolsPage /> : activeNav === 'Imprimantes' ? <PrintersPage /> : <Dashboard user={user} />}
       </main>
     </div>
   )
