@@ -4,32 +4,43 @@ Application web mobile-first pour suivre les imprimantes 3D et le stock de bobin
 
 ## État actuel
 
-Le dépôt contient un dashboard React/Vite responsive et un premier backend Express/PostgreSQL :
+Le dépôt contient un dashboard React/Vite responsive et un backend Express/PostgreSQL :
 
+- authentification par email + mot de passe (inscription, connexion, déconnexion) avec session serveur (cookie httpOnly, stockée en base via `connect-pg-simple`)
+- modèle `users` prévu pour une future authentification déléguée à Authentik (colonnes `auth_provider`/`external_id`)
+- toutes les routes `/api/printers` et `/api/spools` nécessitent d'être authentifié
 - Prusa XL 5 outils, Prusa Core One+ et Prusa MINI+
 - état des machines et progression d'impression
-- stock de bobines avec matière, couleur, emplacement et niveau restant
+- stock de bobines avec matière, couleur, emplacement et niveau restant, entièrement piloté par l'API (plus de données locales/mockées)
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
-- actions rapides et statistiques d'atelier
-- API `/health`, `/api/printers` et CRUD `/api/spools`
-- migrations PostgreSQL dans `server/migrations/001_initial.sql` et `server/migrations/002_add_prusament_qr.sql`
+- API `/health`, `/api/auth/*` et CRUD `/api/printers` / `/api/spools`
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql` et `003_add_users.sql`
 
 ## Démarrage
 
 ```bash
 npm install
+cp .env.example .env
+```
+
+Configure `DATABASE_URL` (et `SESSION_SECRET`) dans `.env`, puis applique les migrations :
+
+```bash
+psql "$DATABASE_URL" -f server/migrations/001_initial.sql
+psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
+```
+
+Lance l'API puis le frontend (le serveur de dev Vite proxifie `/api` et `/health` vers `http://localhost:3000`) :
+
+```bash
+npm run server
 npm run dev
 ```
 
-Pour lancer l'API :
+Crée un compte depuis l'écran d'inscription pour accéder au tableau de bord : sans backend/PostgreSQL configuré, l'application reste bloquée sur l'écran de connexion.
 
-```bash
-cp .env.example .env
-npm run server
-```
-
-L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
 
 ## Déploiement V0 sur un LXC Debian
 
@@ -77,6 +88,7 @@ set -a
 set +a
 psql "$DATABASE_URL" -f server/migrations/001_initial.sql
 psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
 ```
 
 Active les services :
