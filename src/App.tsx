@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SpoolsPage } from './SpoolsPage'
 
 type PrinterStatus = 'printing' | 'ready' | 'offline'
@@ -73,6 +73,19 @@ function PrinterCard({ printer }: { printer: Printer }) {
 
 export function App() {
   const [activeNav, setActiveNav] = useState('Vue d’ensemble')
+  const [auth, setAuth] = useState<{ enabled: boolean; authenticated: boolean; user: { name?: string; username: string; picture?: string } | null } | null>(null)
+
+  useEffect(() => {
+    fetch('/auth/config').then((configResponse) => configResponse.json() as Promise<{ enabled: boolean }>)
+      .then((config) => fetch('/auth/me').then((userResponse) => userResponse.json().then((account) => setAuth({ ...config, ...account }))))
+      .catch(() => setAuth({ enabled: false, authenticated: false, user: null }))
+  }, [])
+
+  if (auth?.enabled && !auth.authenticated) {
+    return <div className="login-page"><div className="login-card"><div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div><h1>Ton atelier, au même endroit</h1><p>Connecte-toi pour accéder à tes imprimantes et tes bobines.</p><a className="primary-button login-button" href="/auth/login">Se connecter</a></div></div>
+  }
+
+  const accountName = auth?.user?.name ?? auth?.user?.username ?? 'Thomas'
 
   return (
     <div className="app-shell">
@@ -87,7 +100,7 @@ export function App() {
         </nav>
         <div className="sidebar-bottom">
           <button type="button" className="nav-item"><Icon>⚙</Icon>Paramètres</button>
-          <div className="profile"><div className="profile-avatar">T</div><div><strong>Thomas</strong><small>Administrateur</small></div><span>•••</span></div>
+          <div className="profile"><div className="profile-avatar">{accountName[0]?.toUpperCase()}</div><div><strong>{accountName}</strong><small>Compte utilisateur</small></div>{auth?.authenticated && <button type="button" className="logout-button" onClick={() => fetch('/auth/logout', { method: 'POST' }).then(() => window.location.reload())}>Déconnexion</button>}</div>
         </div>
       </aside>
 
@@ -100,7 +113,7 @@ export function App() {
 
         {activeNav === 'Bobines' ? <SpoolsPage /> : <div className="content">
           <div className="page-heading">
-            <div><p className="eyebrow">LUNDI 7 SEPTEMBRE 2026</p><h1>Bonjour Thomas <span>👋</span></h1><p className="subtitle">Voici l’état de ton atelier aujourd’hui.</p></div>
+            <div><p className="eyebrow">LUNDI 7 SEPTEMBRE 2026</p><h1>Bonjour {accountName} <span>👋</span></h1><p className="subtitle">Voici l’état de ton atelier aujourd’hui.</p></div>
             <button type="button" className="primary-button"><span>+</span> Ajouter</button>
           </div>
 

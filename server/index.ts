@@ -4,6 +4,7 @@ import express from 'express'
 import { Pool } from 'pg'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { authConfigured, completeLogin, requireAuth, sessionMiddleware, startLogin } from './auth.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 3000)
@@ -12,8 +13,36 @@ const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const frontendDirectory = path.join(projectRoot, 'dist')
 
+app.set('trust proxy', 1)
 app.use(cors())
+app.use(sessionMiddleware())
 app.use(express.json())
+
+app.get('/auth/config', (_request, response) => response.json({ enabled: authConfigured() }))
+app.get('/auth/login', async (request, response, next) => {
+  try { await startLogin(request, response) } catch (error) { next(error) }
+})
+app.get('/auth/callback', async (request, response, next) => {
+  try {
+    const user = await completeLogin(request, response)
+    if (user && pool) {
+      await pool.query(
+        `INSERT INTO users (oidc_subject, username, email, display_name, picture_url, last_login_at)
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (oidc_subject) DO UPDATE SET username = $2, email = $3, display_name = $4, picture_url = $5, last_login_at = now()`,
+        [user.subject, user.username, user.email ?? null, user.name ?? null, user.picture ?? null],
+      )
+    }
+  } catch (error) { next(error) }
+})
+app.get('/auth/me', (request, response) => response.json({ authenticated: Boolean(request.session.user), user: request.session.user ?? null }))
+app.post('/auth/logout', (request, response) => {
+  request.session.destroy((error) => {
+    if (error) { response.status(500).json({ error: 'Unable to logout' }); return }
+    response.clearCookie('connect.sid')
+    response.status(204).end()
+  })
+})
 
 function requirePool(response: express.Response): Pool | null {
   if (!pool) {
@@ -37,6 +66,7 @@ app.get('/health', async (_request, response) => {
   }
 })
 
+app.use('/api', requireAuth)
 app.get('/api/printers', async (_request, response) => {
   if (!pool) {
     response.status(503).json({ error: 'DATABASE_URL is not configured' })

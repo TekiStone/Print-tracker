@@ -22,4 +22,5 @@ fi
 npm ci --omit=optional
 npm run lint
 npm run build
+npm run migrate
 systemctl restart "$SERVICE_NAME"

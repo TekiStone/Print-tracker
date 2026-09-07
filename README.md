@@ -13,6 +13,7 @@ Le dépôt contient un dashboard React/Vite responsive et un premier backend Exp
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
 - actions rapides et statistiques d'atelier
 - API `/health`, `/api/printers` et CRUD `/api/spools`
+- authentification OIDC générique compatible Authentik, session utilisateur et déconnexion
 - migrations PostgreSQL dans `server/migrations/001_initial.sql` et `server/migrations/002_add_prusament_qr.sql`
 
 ## Démarrage
@@ -31,6 +32,12 @@ npm run server
 
 L'API attend une base PostgreSQL configurée par `DATABASE_URL`. En attendant la connexion de la base, l'écran Bobines conserve ses données localement dans le navigateur pour permettre de travailler sur l'interface.
 
+### Authentification OIDC / Authentik
+
+L'authentification est désactivée tant que les variables `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` et `OIDC_REDIRECT_URI` ne sont pas toutes renseignées. Quand elles le sont, `/api/*` nécessite une session OIDC et l'interface affiche le bouton de connexion.
+
+Ajoute aussi un `SESSION_SECRET` aléatoire dans l'environnement. Le fournisseur doit autoriser l'URL de callback exacte, par exemple `https://print-tracker-dev.la-gare.net/auth/callback`. Le modèle d'environnement est dans [print-tracker-oidc.env.example](./deploy/env/print-tracker-oidc.env.example).
+
 ## Déploiement V0 sur un LXC Debian
 
 Le dépôt fournit un service API, un script de mise à jour et des timers systemd. La configuration recommandée héberge deux instances sur le même LXC :
@@ -38,7 +45,9 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - DEV : `/opt/print-tracker-dev`, branche `develop`, API sur `3001`, service `print-tracker-dev.service`.
 - PROD : `/opt/print-tracker-prod`, branche `master`, API sur `3000`, service `print-tracker-prod.service`.
 - Chaque instance possède son environnement et sa base PostgreSQL.
-- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build puis redémarre uniquement l'instance concernée.
+- [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
+- La migration [003_create_users.sql](./server/migrations/003_create_users.sql) crée le registre local des comptes OIDC.
+- [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
 
 ### Installation initiale
 
@@ -69,14 +78,18 @@ nano /etc/print-tracker-dev.env
 nano /etc/print-tracker-prod.env
 ```
 
-Applique les migrations PostgreSQL dans l'ordre :
+Applique les migrations PostgreSQL (une seule fois, exécutable de nouveau sans risque) :
 
 ```bash
-set -a
-. /etc/print-tracker-prod.env
-set +a
-psql "$DATABASE_URL" -f server/migrations/001_initial.sql
-psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
+cd /opt/print-tracker-dev
+set -a; . /etc/print-tracker-dev.env; set +a
+npm ci
+npm run migrate
+
+cd /opt/print-tracker-prod
+set -a; . /etc/print-tracker-prod.env; set +a
+npm ci
+npm run migrate
 ```
 
 Active les services :
@@ -106,7 +119,7 @@ curl http://127.0.0.1:3001/health
 curl http://127.0.0.1:3000/health
 ```
 
-Le timer ne redéploie que si `origin/master` a changé. En cas d'échec du lint ou du build, le service en cours n'est pas redémarré.
+Le timer ne redéploie que si la branche distante a changé. En cas d'échec du lint, du build ou d'une migration, le script s'arrête (`set -e`) et le service en cours n'est pas redémarré.
 
 ### Publication avec Caddy
 
