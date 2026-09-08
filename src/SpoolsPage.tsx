@@ -10,8 +10,14 @@ function parsePrusamentQr(value: string) {
   try {
     const url = new URL(value)
     if (url.hostname !== 'prusament.com' && !url.hostname.endsWith('.prusament.com')) return null
-    const match = url.pathname.match(/\/spool\/([^/?#]+)/i)
-    return match ? { qrUrl: url.toString(), prusamentId: match[1] } : null
+    const pathSegments = url.pathname.split('/').filter(Boolean)
+    const spoolSegmentIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 'spool')
+    if (spoolSegmentIndex === -1) return null
+
+    const prusamentId = pathSegments.at(-1)
+    return prusamentId && spoolSegmentIndex < pathSegments.length - 1
+      ? { qrUrl: url.toString(), prusamentId }
+      : null
   } catch {
     return null
   }
