@@ -55,6 +55,7 @@ function renderAuthenticatedApp() {
 
 describe('application React', () => {
   beforeEach(() => {
+    window.history.replaceState(null, '', '/')
     vi.mocked(listPrinters).mockResolvedValue([...printers])
     vi.mocked(listSpools).mockResolvedValue(spools)
   })
@@ -76,9 +77,24 @@ describe('application React', () => {
     await screen.findByText(/Bonjour Thomas/)
     fireEvent.click(screen.getByRole('button', { name: /Imprimantes/ }))
     expect(await screen.findByRole('heading', { name: 'Imprimantes' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/printers')
 
     fireEvent.click(screen.getByRole('button', { name: /Bobines/ }))
     expect(await screen.findByRole('heading', { name: 'Tes bobines' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/spools')
+  })
+
+  it('charge la page correspondant à l’URL et suit l’historique du navigateur', async () => {
+    window.history.replaceState(null, '', '/printers')
+    renderAuthenticatedApp()
+
+    expect(await screen.findByRole('heading', { name: 'Imprimantes' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Bobines/ }))
+    expect(await screen.findByRole('heading', { name: 'Tes bobines' })).toBeInTheDocument()
+
+    window.history.back()
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    expect(await screen.findByRole('heading', { name: 'Imprimantes' })).toBeInTheDocument()
   })
 
   it('affiche la page de connexion quand la session est absente', async () => {
