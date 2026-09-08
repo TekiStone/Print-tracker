@@ -319,7 +319,7 @@ app.post('/api/printers', csrfSynchronisedProtection, requireAuth, async (reques
 
     const result = await database.query(
       `INSERT INTO printers (name, model, color, prusalink_url, prusalink_api_key, prusalink_enabled, active_spool_id, active_spool_assigned_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $7 IS NULL THEN NULL ELSE now() END)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::uuid, CASE WHEN $7::uuid IS NULL THEN NULL ELSE now() END)
        RETURNING id`,
       [normalizedName, normalizedModel, normalizedColor, normalizedUrl, normalizedApiKey, enabled, normalizedActiveSpoolId],
     )
@@ -388,11 +388,11 @@ app.patch('/api/printers/:id', csrfSynchronisedProtection, requireAuth, async (r
            prusalink_url = $4,
            prusalink_api_key = $5,
            prusalink_enabled = $6,
-           active_spool_id = CASE WHEN $8 THEN $7 ELSE active_spool_id END,
+           active_spool_id = CASE WHEN $8 THEN $7::uuid ELSE active_spool_id END,
            active_spool_assigned_at = CASE
              WHEN $8 = false THEN active_spool_assigned_at
-             WHEN $7 IS NULL THEN NULL
-             WHEN $7 IS DISTINCT FROM active_spool_id THEN now()
+             WHEN $7::uuid IS NULL THEN NULL
+             WHEN $7::uuid IS DISTINCT FROM active_spool_id THEN now()
              ELSE active_spool_assigned_at
            END
        WHERE id = $9
