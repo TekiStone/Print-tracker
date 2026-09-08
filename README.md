@@ -29,11 +29,7 @@ cp .env.example .env
 Configure `DATABASE_URL`, `SESSION_SECRET` et si besoin les variables PrusaLink dans `.env`, puis applique les migrations :
 
 ```bash
-psql "$DATABASE_URL" -f server/migrations/001_initial.sql
-psql "$DATABASE_URL" -f server/migrations/002_add_prusament_qr.sql
-psql "$DATABASE_URL" -f server/migrations/003_add_users.sql
-psql "$DATABASE_URL" -f server/migrations/003_add_prusalink_sync.sql
-psql "$DATABASE_URL" -f server/migrations/004_link_prusalink_spools.sql
+npm run migrate
 ```
 
 Lance l'API puis le frontend (le serveur de dev Vite proxifie `/api` et `/health` vers `http://localhost:3000`) :
@@ -70,7 +66,7 @@ Le dépôt fournit un service API, un script de mise à jour et des timers syste
 - Chaque instance possède son environnement et sa base PostgreSQL.
 - [auto-pull.sh](./deploy/scripts/auto-pull.sh) fait `fetch`, fast-forward, `npm ci`, lint, build, applique les migrations PostgreSQL manquantes (`npm run migrate`) puis redémarre uniquement l'instance concernée.
 - Les migrations [003_add_users.sql](./server/migrations/003_add_users.sql), [003_add_prusalink_sync.sql](./server/migrations/003_add_prusalink_sync.sql) et [004_link_prusalink_spools.sql](./server/migrations/004_link_prusalink_spools.sql) ajoutent l’authentification, la synchronisation PrusaLink et l’imputation automatique de filament.
-- [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées.
+- [server/migrate.ts](./server/migrate.ts) applique les fichiers de `server/migrations/` dans l'ordre, une seule fois chacun (suivi dans la table `schema_migrations`). Il est sûr de le relancer : les migrations déjà appliquées sont ignorées. L'API exécute aussi ce contrôle au démarrage avant d'écouter le port HTTP.
 
 ### Installation initiale
 
