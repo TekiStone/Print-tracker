@@ -97,12 +97,12 @@ describe('gestion des bobines', () => {
   })
 
   it('pré-remplit le formulaire avec un QR Prusament valide et rejette les QR invalides', async () => {
-    mocks.decodeOnceFromVideoDevice.mockResolvedValueOnce({ getText: () => 'https://prusament.com/spool/XYZ' })
+    mocks.decodeOnceFromVideoDevice.mockResolvedValueOnce({ getText: () => 'https://prusament.com/spool/pla-lipstick-red/21a0b32f/' })
     render(<SpoolsPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
 
-    expect(await screen.findByText('QR Prusament reconnu · XYZ')).toBeInTheDocument()
+    expect(await screen.findByText('QR Prusament reconnu · 21a0b32f')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Prusament')).toBeInTheDocument()
   })
 
