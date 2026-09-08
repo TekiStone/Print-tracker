@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { BrowserQRCodeReader } from '@zxing/browser'
+import { BarcodeFormat, BrowserQRCodeReader, type IScannerControls } from '@zxing/browser'
+import { DecodeHintType } from '@zxing/library'
 import { createSpool, deleteSpool, listSpools, updateSpool, type Spool } from './api'
 
 type FormState = Omit<Spool, 'id'>
@@ -46,10 +47,74 @@ export function SpoolsPage() {
   const [loadError, setLoadError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const scannerControlsRef = useRef<IScannerControls | null>(null)
 
   useEffect(() => {
     void loadSpools()
   }, [])
+
+  useEffect(() => {
+    if (!isScannerOpen) return
+
+    let isActive = true
+    const hints = new Map<DecodeHintType, unknown>([
+      [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]],
+      [DecodeHintType.TRY_HARDER, true],
+    ])
+    const reader = new BrowserQRCodeReader(hints, {
+      delayBetweenScanAttempts: 100,
+      delayBetweenScanSuccess: 100,
+      tryPlayVideoTimeout: 5000,
+    })
+
+    const constraints: MediaStreamConstraints = {
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 1280 },
+      },
+    }
+
+    setScanError('')
+    void reader.decodeFromConstraints(constraints, 'qr-video', (result, _error, controls) => {
+      if (!isActive) {
+        controls.stop()
+        return
+      }
+
+      scannerControlsRef.current = controls
+      if (!result) return
+
+      const parsed = parsePrusamentQr(result.getText())
+      if (!parsed) {
+        setScanError('QR lu, mais ce n’est pas une fiche Prusament.')
+        return
+      }
+
+      controls.stop()
+      scannerControlsRef.current = null
+      setEditingId(null)
+      setForm({ ...emptyForm, brand: 'Prusament', qrUrl: parsed.qrUrl, prusamentId: parsed.prusamentId })
+      setIsScannerOpen(false)
+      setIsFormOpen(true)
+    }).then((controls) => {
+      if (isActive) {
+        scannerControlsRef.current = controls
+      } else {
+        controls.stop()
+      }
+    }).catch((error) => {
+      if (!isActive) return
+      setScanError(error instanceof Error ? error.message : 'Impossible de lire le QR code. Vérifie l’autorisation caméra.')
+    })
+
+    return () => {
+      isActive = false
+      scannerControlsRef.current?.stop()
+      scannerControlsRef.current = null
+    }
+  }, [isScannerOpen])
 
   const filteredSpools = useMemo(() => spools.filter((spool) => {
     const matchesQuery = `${spool.brand} ${spool.material} ${spool.color} ${spool.location}`.toLowerCase().includes(query.toLowerCase())
@@ -75,25 +140,15 @@ export function SpoolsPage() {
     setIsFormOpen(true)
   }
 
-  async function scanQr() {
+  function scanQr() {
     setScanError('')
     setIsScannerOpen(true)
-    const reader = new BrowserQRCodeReader()
-    try {
-      const result = await reader.decodeOnceFromVideoDevice(undefined, 'qr-video')
-      const parsed = parsePrusamentQr(result.getText())
-      if (!parsed) {
-        setScanError('Ce QR code ne correspond pas à une fiche Prusament.')
-        setIsScannerOpen(false)
-        return
-      }
-      setEditingId(null)
-      setForm({ ...emptyForm, brand: 'Prusament', qrUrl: parsed.qrUrl, prusamentId: parsed.prusamentId })
-      setIsScannerOpen(false)
-      setIsFormOpen(true)
-    } catch {
-      setScanError('Impossible de lire le QR code. Vérifie l’autorisation caméra.')
-    }
+  }
+
+  function closeScanner() {
+    scannerControlsRef.current?.stop()
+    scannerControlsRef.current = null
+    setIsScannerOpen(false)
   }
 
   function openEdit(spool: Spool) {
@@ -185,7 +240,7 @@ export function SpoolsPage() {
         {!isLoading && filteredSpools.length === 0 && <div className="empty-spools">Aucune bobine ne correspond à ta recherche.</div>}
       </section>
       {isFormOpen && <div className="modal-backdrop" role="presentation"><form className="spool-form" onSubmit={(event) => void submit(event)}><div className="modal-heading"><div><p className="eyebrow">{editingId ? 'MODIFICATION' : 'NOUVELLE BOBINE'}</p><h2>{editingId ? 'Modifier la bobine' : 'Ajouter une bobine'}</h2></div><button type="button" className="close-button" onClick={() => setIsFormOpen(false)}>×</button></div><label>Marque<input required value={form.brand} onChange={(event) => setForm({ ...form, brand: event.target.value })} placeholder="Ex. Prusament" /></label><div className="form-grid"><label>Matière<select value={form.material} onChange={(event) => setForm({ ...form, material: event.target.value })}><option>PLA</option><option>PETG</option><option>ASA</option><option>ABS</option><option>TPU</option></select></label><label>Couleur<input required value={form.color} onChange={(event) => setForm({ ...form, color: event.target.value })} placeholder="Ex. Galaxy Black" /></label></div><div className="form-grid"><label>Poids initial (g)<input required type="number" min="1" value={form.initial} onChange={(event) => setForm({ ...form, initial: Number(event.target.value) })} /></label><label>Poids restant (g)<input required type="number" min="0" max={form.initial} value={form.remaining} onChange={(event) => setForm({ ...form, remaining: Number(event.target.value) })} /></label></div><label>Emplacement<input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="Ex. Boîte A · 03" /></label>{form.prusamentId && <div className="qr-confirmed">QR Prusament reconnu · {form.prusamentId}</div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setIsFormOpen(false)}>Annuler</button><button type="submit" className="primary-button" disabled={isSaving}>{isSaving ? 'Enregistrement…' : editingId ? 'Enregistrer' : 'Ajouter la bobine'}</button></div></form></div>}
-      {isScannerOpen && <div className="modal-backdrop" role="presentation"><div className="scanner-modal"><div className="modal-heading"><div><p className="eyebrow">IDENTIFICATION</p><h2>Scanner le QR Prusament</h2></div><button type="button" className="close-button" onClick={() => setIsScannerOpen(false)}>×</button></div><video id="qr-video" className="qr-video" autoPlay muted playsInline />{scanError && <p className="scan-error">{scanError}</p>}<p className="scanner-help">Autorise la caméra puis place le QR code de la bobine dans le cadre.</p></div></div>}
+      {isScannerOpen && <div className="modal-backdrop" role="presentation"><div className="scanner-modal"><div className="modal-heading"><div><p className="eyebrow">IDENTIFICATION</p><h2>Scanner le QR Prusament</h2></div><button type="button" className="close-button" onClick={closeScanner}>×</button></div><video id="qr-video" className="qr-video" autoPlay muted playsInline />{scanError && <p className="scan-error">{scanError}</p>}<p className="scanner-status">Scan en cours…</p><p className="scanner-help">Utilise la caméra arrière. Mets le QR bien à plat, lumineux, et remplis environ la moitié du cadre.</p></div></div>}
     </div>
   )
 }

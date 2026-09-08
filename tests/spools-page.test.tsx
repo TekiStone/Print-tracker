@@ -4,13 +4,18 @@ import { createSpool, deleteSpool, listSpools, updateSpool } from '../src/api'
 import { SpoolsPage } from '../src/SpoolsPage'
 
 const mocks = vi.hoisted(() => ({
-  decodeOnceFromVideoDevice: vi.fn(),
+  decodeFromConstraints: vi.fn(),
 }))
 
 vi.mock('@zxing/browser', () => ({
+  BarcodeFormat: { QR_CODE: 'QR_CODE' },
   BrowserQRCodeReader: vi.fn(function BrowserQRCodeReader() {
-    return { decodeOnceFromVideoDevice: mocks.decodeOnceFromVideoDevice }
+    return { decodeFromConstraints: mocks.decodeFromConstraints }
   }),
+}))
+
+vi.mock('@zxing/library', () => ({
+  DecodeHintType: { POSSIBLE_FORMATS: 'POSSIBLE_FORMATS', TRY_HARDER: 'TRY_HARDER' },
 }))
 
 vi.mock('../src/api', () => ({
@@ -27,7 +32,9 @@ const spools = [
 
 describe('gestion des bobines', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.mocked(listSpools).mockResolvedValue(spools)
+    mocks.decodeFromConstraints.mockResolvedValue({ stop: vi.fn() })
   })
 
   it('charge les statistiques, filtre par recherche et matière', async () => {
@@ -97,21 +104,37 @@ describe('gestion des bobines', () => {
   })
 
   it('pré-remplit le formulaire avec un QR Prusament valide et rejette les QR invalides', async () => {
-    mocks.decodeOnceFromVideoDevice.mockResolvedValueOnce({ getText: () => 'https://prusament.com/spool/pla-lipstick-red/21a0b32f/' })
+    const controls = { stop: vi.fn() }
+    mocks.decodeFromConstraints.mockImplementationOnce(async (_constraints, _video, callback) => {
+      callback({ getText: () => 'https://prusament.com/spool/pla-lipstick-red/21a0b32f/' }, undefined, controls)
+      return controls
+    })
     render(<SpoolsPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
 
     expect(await screen.findByText('QR Prusament reconnu · 21a0b32f')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Prusament')).toBeInTheDocument()
+    expect(mocks.decodeFromConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({ audio: false, video: expect.objectContaining({ facingMode: { ideal: 'environment' } }) }),
+      'qr-video',
+      expect.any(Function),
+    )
+    expect(controls.stop).toHaveBeenCalled()
   })
 
   it('affiche une erreur pour un QR non Prusament', async () => {
-    mocks.decodeOnceFromVideoDevice.mockResolvedValueOnce({ getText: () => 'https://example.test/spool/XYZ' })
+    const controls = { stop: vi.fn() }
+    mocks.decodeFromConstraints.mockImplementationOnce(async (_constraints, _video, callback) => {
+      callback({ getText: () => 'https://example.test/spool/XYZ' }, undefined, controls)
+      return controls
+    })
     render(<SpoolsPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
-    expect(await screen.findByText('Ce QR code ne correspond pas à une fiche Prusament.')).toBeInTheDocument()
+    expect(await screen.findByText('QR lu, mais ce n’est pas une fiche Prusament.')).toBeInTheDocument()
+    expect(screen.getByText('Scan en cours…')).toBeInTheDocument()
+    expect(controls.stop).not.toHaveBeenCalled()
   })
 
   it('affiche les erreurs de sauvegarde et de suppression', async () => {
