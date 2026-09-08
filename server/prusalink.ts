@@ -400,6 +400,8 @@ export function startPrusaLinkScheduler(database: Pool) {
     running = true
     try {
       await syncEnabledPrinters(database)
+    } catch (error) {
+      console.error('PrusaLink synchronization failed:', error)
     } finally {
       running = false
     }
