@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createPrinter, listPrinterJobs, listPrinters, listSpools, syncPrinterNow, updatePrinter, type PrintJob, type Printer, type PrinterPayload, type Spool } from './api'
+import { createPrinter, deletePrinter, listPrinterJobs, listPrinters, listSpools, syncPrinterNow, updatePrinter, type PrintJob, type Printer, type PrinterPayload, type Spool } from './api'
 
 type FormState = PrinterPayload & { prusalinkApiKey: string }
 
@@ -51,6 +51,7 @@ export function PrintersPage() {
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [syncingId, setSyncingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   useEffect(() => {
     void loadPrinters()
@@ -140,6 +141,25 @@ export function PrintersPage() {
     }
   }
 
+  async function remove(printer: Printer) {
+    if (!window.confirm(`Supprimer l’imprimante « ${printer.name} » ?`)) return
+
+    setDeletingId(printer.id)
+    setLoadError('')
+    try {
+      await deletePrinter(printer.id)
+      setPrinters((current) => current.filter((item) => item.id !== printer.id))
+      setJobsByPrinter((current) => {
+        const { [printer.id]: _removed, ...rest } = current
+        return rest
+      })
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Impossible de supprimer l’imprimante')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   async function showJobs(printerId: string) {
     setLoadingJobsFor(printerId)
     try {
@@ -199,6 +219,9 @@ export function PrintersPage() {
               <button type="button" className="text-button" onClick={() => void showJobs(printer.id)}>{loadingJobsFor === printer.id ? 'Chargement…' : 'Historique'}</button>
               <button type="button" className="primary-button primary-button--small" disabled={!printer.prusalinkEnabled || syncingId === printer.id} onClick={() => void sync(printer.id)}>
                 {syncingId === printer.id ? 'Synchronisation…' : 'Synchroniser'}
+              </button>
+              <button type="button" className="text-button text-button--danger" disabled={deletingId === printer.id} onClick={() => void remove(printer)}>
+                {deletingId === printer.id ? 'Suppression…' : 'Supprimer'}
               </button>
             </div>
 

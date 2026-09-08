@@ -46,7 +46,7 @@ function spoolPercentage(spool: Spool) {
   return Math.round((spool.remaining / spool.initial) * 100)
 }
 
-function PrinterCard({ printer }: { printer: Printer }) {
+function PrinterCard({ printer, onSelect }: { printer: Printer, onSelect: () => void }) {
   return (
     <article className="printer-card">
       <div className="printer-card__top">
@@ -65,7 +65,7 @@ function PrinterCard({ printer }: { printer: Printer }) {
       ) : (
         <div className="printer-empty">
           <span>{printer.status === 'ready' ? 'Aucun travail en attente' : formatLastSeen(printer.lastSeenAt)}</span>
-          <button type="button" className="text-button">Voir les détails →</button>
+          <button type="button" className="text-button" onClick={onSelect}>Voir les détails →</button>
         </div>
       )}
     </article>
@@ -139,7 +139,7 @@ function Dashboard({ user, onSelectNav }: { user: { name: string }, onSelectNav:
       <section className="printer-grid">
         {!isLoading && printers.length === 0
           ? <div className="empty-panel">Aucune imprimante n’est encore enregistrée.</div>
-          : printers.map((printer) => <PrinterCard key={printer.id} printer={printer} />)}
+          : printers.map((printer) => <PrinterCard key={printer.id} printer={printer} onSelect={() => onSelectNav('Imprimantes')} />)}
       </section>
 
       <div className="lower-grid">
