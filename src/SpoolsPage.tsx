@@ -162,6 +162,7 @@ export function SpoolsPage() {
         <div><span>À surveiller</span><strong className="warning-text">{spools.filter((spool) => percentage(spool) < 20).length}</strong></div>
       </section>
       {loadError && <div className="page-message page-message--error">{loadError}</div>}
+      {scanError && !isScannerOpen && <div className="page-message page-message--error">{scanError}</div>}
       {isLoading && <div className="page-message">Chargement des bobines…</div>}
       <div className="spool-toolbar"><label className="search-box">⌕<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher une bobine..." /></label><select value={material} onChange={(event) => setMaterial(event.target.value)}><option>Tous</option><option>PLA</option><option>PETG</option><option>ASA</option><option>ABS</option><option>TPU</option></select></div>
       <section className="managed-spools">
