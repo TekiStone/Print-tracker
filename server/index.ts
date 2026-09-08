@@ -9,6 +9,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import session from 'express-session'
 import { Pool } from 'pg'
+import { runMigrations } from './migrate.js'
 import { startPrusaLinkScheduler, syncPrinter } from './prusalink.js'
 
 declare module 'express-session' {
@@ -593,9 +594,20 @@ app.get(/^(?!\/api(?:\/|$)|\/health$).*/, (_request, response) => {
   response.sendFile(path.join(frontendDirectory, 'index.html'))
 })
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (pool) startPrusaLinkScheduler(pool)
+async function startServer() {
+  if (pool) {
+    await runMigrations(pool)
+    startPrusaLinkScheduler(pool)
+  }
+
   app.listen(port, host, () => {
     console.log(`Print Tracker listening on http://${host}:${port}`)
+  })
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startServer().catch((error) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exit(1)
   })
 }
