@@ -85,14 +85,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    const csrfToken = await getCsrfToken()
-    await fetch('/api/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'x-csrf-token': csrfToken },
-    })
-    setUser(null)
-    setStatus('unauthenticated')
+    try {
+      const csrfToken = await getCsrfToken()
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'x-csrf-token': csrfToken },
+      })
+    } finally {
+      setUser(null)
+      setStatus('unauthenticated')
+    }
   }, [])
 
   return (

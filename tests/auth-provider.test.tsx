@@ -78,6 +78,19 @@ describe('AuthProvider', () => {
     }))
   })
 
+  it('déconnecte localement même si l’appel réseau de déconnexion échoue', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json({ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }))
+      .mockRejectedValueOnce(new Error('Network error')))
+    renderProbe()
+
+    expect(await screen.findByText('Atelier')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'logout' }))
+
+    await waitFor(() => expect(screen.getByText('unauthenticated')).toBeInTheDocument())
+    expect(screen.getByText('aucun utilisateur')).toBeInTheDocument()
+  })
+
   it('expose le message serveur quand la connexion échoue', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(Response.json({ error: 'Not authenticated' }, { status: 401 }))
