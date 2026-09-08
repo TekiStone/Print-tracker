@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listPrinters, listSpools, type Printer, type PrinterStatus, type Spool } from './api'
 import { LoginPage } from './LoginPage'
 import { PrintersPage } from './PrintersPage'
@@ -10,6 +10,23 @@ const statusLabel: Record<PrinterStatus, string> = {
   ready: 'Prête',
   offline: 'Hors ligne',
   error: 'Erreur',
+}
+
+const navigationItems = [
+  { label: 'Vue d’ensemble', path: '/', icon: '⌂' },
+  { label: 'Imprimantes', path: '/printers', icon: '▣' },
+  { label: 'Bobines', path: '/spools', icon: '◉' },
+] as const
+
+type NavigationItem = (typeof navigationItems)[number]
+type NavigationLabel = NavigationItem['label']
+
+function navigationFromPath(pathname: string): NavigationLabel {
+  return navigationItems.find((item) => item.path === pathname)?.label ?? 'Vue d’ensemble'
+}
+
+function pathFromNavigation(label: NavigationLabel) {
+  return navigationItems.find((item) => item.label === label)!.path
 }
 
 function Icon({ children }: { children: string }) {
@@ -72,7 +89,7 @@ function PrinterCard({ printer, onSelect }: { printer: Printer, onSelect: () => 
   )
 }
 
-function Dashboard({ user, onSelectNav }: { user: { name: string }, onSelectNav: (nav: string) => void }) {
+function Dashboard({ user, onSelectNav }: { user: { name: string }, onSelectNav: (nav: NavigationLabel) => void }) {
   const [printers, setPrinters] = useState<Printer[]>([])
   const [spools, setSpools] = useState<Spool[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -158,8 +175,25 @@ function Dashboard({ user, onSelectNav }: { user: { name: string }, onSelectNav:
 
 export function App() {
   const { user, status, logout } = useAuth()
-  const [activeNav, setActiveNav] = useState('Vue d’ensemble')
+  const [activeNav, setActiveNav] = useState<NavigationLabel>(() => navigationFromPath(window.location.pathname))
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
+
+  useEffect(() => {
+    function handlePopState() {
+      setActiveNav(navigationFromPath(window.location.pathname))
+      setIsMobileNavOpen(false)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const navigate = useCallback((label: NavigationLabel) => {
+    const path = pathFromNavigation(label)
+    if (window.location.pathname !== path) window.history.pushState(null, '', path)
+    setActiveNav(label)
+    setIsMobileNavOpen(false)
+  }, [])
 
   if (status === 'loading') {
     return <div className="auth-shell"><p>Chargement…</p></div>
@@ -175,9 +209,9 @@ export function App() {
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
         <button type="button" className="mobile-close" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)}>×</button>
         <nav>
-          {['Vue d’ensemble', 'Imprimantes', 'Bobines'].map((item) => (
-            <button key={item} type="button" className={activeNav === item ? 'nav-item active' : 'nav-item'} onClick={() => { setActiveNav(item); setIsMobileNavOpen(false) }}>
-              <Icon>{item === 'Vue d’ensemble' ? '⌂' : item === 'Imprimantes' ? '▣' : '◉'}</Icon>{item}
+          {navigationItems.map((item) => (
+            <button key={item.label} type="button" className={activeNav === item.label ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.label)}>
+              <Icon>{item.icon}</Icon>{item.label}
             </button>
           ))}
         </nav>
@@ -199,7 +233,7 @@ export function App() {
           ? <SpoolsPage />
           : activeNav === 'Imprimantes'
             ? <PrintersPage />
-            : <Dashboard user={user} onSelectNav={setActiveNav} />}
+            : <Dashboard user={user} onSelectNav={navigate} />}
       </main>
     </div>
   )
