@@ -252,6 +252,12 @@ export async function syncPrinterNow(id: string) {
   return mapPrinter(printer)
 }
 
+export async function deletePrinter(id: string) {
+  await request<void>(`/api/printers/${id}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function listPrinterJobs(id: string) {
   const jobs = await request<ApiPrintJob[]>(`/api/printers/${id}/jobs`)
   return jobs.map(mapPrintJob)
