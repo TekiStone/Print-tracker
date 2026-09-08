@@ -195,24 +195,31 @@ export function PrintersPage() {
               <span className={`status status--${printer.status}`}><span />{statusLabel[printer.status]}</span>
             </div>
 
-            <div className="managed-printer__meta">
-              <span><b>PrusaLink</b>{printer.prusalinkEnabled ? 'Activé' : 'Désactivé'}</span>
-              <span><b>URL</b>{printer.prusalinkUrl || 'Non configurée'}</span>
-              <span><b>Bobine active</b>{printer.activeSpoolLabel || 'Non assignée'}</span>
-              <span><b>Assignée le</b>{formatDateTime(printer.activeSpoolAssignedAt)}</span>
-              <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
-              <span><b>Dernière activité</b>{formatDateTime(printer.lastSeenAt)}</span>
-              <span><b>Buse</b>{formatTemperature(printer.nozzleTemperature, printer.nozzleTargetTemperature)}</span>
-              <span><b>Plateau</b>{formatTemperature(printer.bedTemperature, printer.bedTargetTemperature)}</span>
-              <span><b>Travail</b>{printer.job || 'Aucun'}</span>
-              <span><b>Progression</b>{printer.progress !== undefined ? `${printer.progress}%` : 'n/d'}</span>
+            <div className="managed-printer__prusalink">
+              <div className="managed-printer__section-title">
+                <span>Données PrusaLink</span>
+                <small>{printer.prusalinkEnabled ? 'Synchronisation active' : 'Synchronisation inactive'}</small>
+              </div>
+
+              <div className="managed-printer__meta">
+                <span><b>PrusaLink</b>{printer.prusalinkEnabled ? 'Activé' : 'Désactivé'}</span>
+                <span><b>URL</b>{printer.prusalinkUrl || 'Non configurée'}</span>
+                <span><b>Bobine active</b>{printer.activeSpoolLabel || 'Non assignée'}</span>
+                <span><b>Assignée le</b>{formatDateTime(printer.activeSpoolAssignedAt)}</span>
+                <span><b>Dernière synchro</b>{formatDateTime(printer.lastSyncAt)}</span>
+                <span><b>Dernière activité</b>{formatDateTime(printer.lastSeenAt)}</span>
+                <span><b>Buse</b>{formatTemperature(printer.nozzleTemperature, printer.nozzleTargetTemperature)}</span>
+                <span><b>Plateau</b>{formatTemperature(printer.bedTemperature, printer.bedTargetTemperature)}</span>
+                <span><b>Travail</b>{printer.job || 'Aucun'}</span>
+                <span><b>Progression</b>{printer.progress !== undefined ? `${printer.progress}%` : 'n/d'}</span>
+              </div>
+
+              {(printer.firmwareVersion || printer.prusalinkVersion) && (
+                <p className="printer-version">Firmware {printer.firmwareVersion || 'n/d'} · PrusaLink {printer.prusalinkVersion || 'n/d'}</p>
+              )}
+
+              {printer.lastSyncError && <p className="printer-error">Dernière erreur : {printer.lastSyncError}</p>}
             </div>
-
-            {(printer.firmwareVersion || printer.prusalinkVersion) && (
-              <p className="printer-version">Firmware {printer.firmwareVersion || 'n/d'} · PrusaLink {printer.prusalinkVersion || 'n/d'}</p>
-            )}
-
-            {printer.lastSyncError && <p className="printer-error">Dernière erreur : {printer.lastSyncError}</p>}
 
             <div className="managed-printer__actions">
               <button type="button" className="text-button" onClick={() => openEdit(printer)}>Modifier</button>

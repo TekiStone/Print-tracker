@@ -49,6 +49,7 @@ describe('page imprimantes', () => {
 
     expect(await screen.findByText('Prusa XL')).toBeInTheDocument()
     expect(screen.getByText('En impression')).toBeInTheDocument()
+    expect(screen.getByText('Données PrusaLink')).toBeInTheDocument()
     expect(screen.getByText('215° / 220°')).toBeInTheDocument()
     expect(screen.getByText('Firmware 6.0.0 · PrusaLink 2.0.0')).toBeInTheDocument()
 
