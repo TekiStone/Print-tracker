@@ -217,7 +217,7 @@ export function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="profile"><div className="profile-avatar">{user.name.charAt(0).toUpperCase()}</div><div><strong>{user.name}</strong><small>{user.role === 'admin' ? 'Administrateur' : 'Membre'}</small></div></div>
-          <button type="button" className="nav-item" onClick={() => { setIsMobileNavOpen(false); void logout() }}><Icon>⏻</Icon>Déconnexion</button>
+          <button type="button" className="nav-item" onClick={() => { setIsMobileNavOpen(false); void logout() }}><Icon>↪</Icon>Déconnexion</button>
         </div>
       </aside>
       {isMobileNavOpen && <button type="button" className="sidebar-overlay" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)} />}
@@ -226,7 +226,6 @@ export function App() {
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">P</div><strong>print<span>tracker</span></strong></div>
           <button type="button" className="mobile-menu" aria-label="Ouvrir le menu" aria-expanded={isMobileNavOpen} onClick={() => setIsMobileNavOpen((open) => !open)}>☰</button>
-          <button type="button" className="text-button" onClick={() => void logout()}>Déconnexion</button>
         </header>
 
         {activeNav === 'Bobines'
