@@ -5,12 +5,13 @@ import { SpoolsPage } from '../src/SpoolsPage'
 
 const mocks = vi.hoisted(() => ({
   decodeFromConstraints: vi.fn(),
+  decodeFromCanvas: vi.fn(),
 }))
 
 vi.mock('@zxing/browser', () => ({
   BarcodeFormat: { QR_CODE: 'QR_CODE' },
   BrowserQRCodeReader: vi.fn(function BrowserQRCodeReader() {
-    return { decodeFromConstraints: mocks.decodeFromConstraints }
+    return { decodeFromConstraints: mocks.decodeFromConstraints, decodeFromCanvas: mocks.decodeFromCanvas }
   }),
 }))
 
@@ -35,6 +36,7 @@ describe('gestion des bobines', () => {
     vi.clearAllMocks()
     vi.mocked(listSpools).mockResolvedValue(spools)
     mocks.decodeFromConstraints.mockResolvedValue({ stop: vi.fn() })
+    mocks.decodeFromCanvas.mockImplementation(() => { throw new Error('not found') })
   })
 
   it('charge les statistiques, filtre par recherche et matière', async () => {
@@ -132,9 +134,55 @@ describe('gestion des bobines', () => {
     render(<SpoolsPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
-    expect(await screen.findByText('QR lu, mais ce n’est pas une fiche Prusament.')).toBeInTheDocument()
+    expect(await screen.findByText('QR lu, mais ce n’est pas une fiche Prusament (prusament.com ou prusa.io).')).toBeInTheDocument()
     expect(screen.getByText('Scan en cours…')).toBeInTheDocument()
     expect(controls.stop).not.toHaveBeenCalled()
+  })
+
+  it('accepte les QR courts prusa.io gravés sur la bobine', async () => {
+    const controls = { stop: vi.fn() }
+    mocks.decodeFromConstraints.mockImplementationOnce(async (_constraints, _video, callback) => {
+      callback({ getText: () => 'http://prusa.io/s/21a0b32f' }, undefined, controls)
+      return controls
+    })
+    render(<SpoolsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
+
+    expect(await screen.findByText('QR Prusament reconnu · 21a0b32f')).toBeInTheDocument()
+    expect(controls.stop).toHaveBeenCalled()
+  })
+
+  it('lit un QR gravé clair sur fond noir via la passe inversée', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const imageData = { data: new Uint8ClampedArray(4) }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => imageData,
+      putImageData: vi.fn(),
+    } as unknown as CanvasRenderingContext2D)
+    const stop = vi.fn()
+    mocks.decodeFromConstraints.mockResolvedValue({ stop })
+    mocks.decodeFromCanvas.mockReturnValue({ getText: () => 'http://prusa.io/s/21a0b32f' })
+    render(<SpoolsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
+    Object.defineProperty(document.getElementById('qr-video')!, 'videoWidth', { value: 640 })
+    Object.defineProperty(document.getElementById('qr-video')!, 'videoHeight', { value: 640 })
+    await vi.advanceTimersByTimeAsync(500)
+    vi.useRealTimers()
+
+    expect(await screen.findByText('QR Prusament reconnu · 21a0b32f')).toBeInTheDocument()
+    expect(stop).toHaveBeenCalled()
+  })
+
+  it('permet la saisie manuelle de l’identifiant Prusament', async () => {    render(<SpoolsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Scanner un QR/ }))
+    fireEvent.change(screen.getByPlaceholderText('Ex. 21a0b32f ou prusa.io/s/21a0b32f'), { target: { value: '21a0b32f' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Valider' }))
+
+    expect(await screen.findByText('QR Prusament reconnu · 21a0b32f')).toBeInTheDocument()
   })
 
   it('affiche les erreurs de sauvegarde et de suppression', async () => {
