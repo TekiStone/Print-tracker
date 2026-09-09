@@ -4,3 +4,6 @@ dist/
 vite.config.js
 vite.config.d.ts
 coverage/
+.env
+.env.*
+!.env.example
