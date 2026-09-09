@@ -114,7 +114,10 @@ describe('application React', () => {
     renderAuthenticatedApp()
 
     await screen.findByText(/Bonjour Thomas/)
-    fireEvent.click(screen.getAllByRole('button', { name: 'Déconnexion' })[0])
+    const logoutButtons = screen.getAllByRole('button', { name: 'Déconnexion' })
+    expect(logoutButtons).toHaveLength(1)
+    expect(logoutButtons[0].querySelector('.icon')).toHaveTextContent('↪')
+    fireEvent.click(logoutButtons[0])
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Connexion' })).toBeInTheDocument())
     expect(fetch).toHaveBeenCalledWith('/api/auth/logout', {
