@@ -2,9 +2,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../src/App'
 import { AuthProvider } from '../src/auth'
-import { listPrinters, listSpools } from '../src/api'
+import { getSettings, listPrinters, listSpools } from '../src/api'
 
 vi.mock('../src/api', () => ({
+  getSettings: vi.fn(),
   listPrinters: vi.fn(),
   listSpools: vi.fn(),
 }))
@@ -58,6 +59,7 @@ describe('application React', () => {
     window.history.replaceState(null, '', '/')
     vi.mocked(listPrinters).mockResolvedValue([...printers])
     vi.mocked(listSpools).mockResolvedValue(spools)
+    vi.mocked(getSettings).mockResolvedValue({ registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false })
   })
 
   it('charge le tableau de bord depuis l’API et affiche les indicateurs clés', async () => {

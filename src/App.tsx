@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listPrinters, listSpools, type Printer, type PrinterStatus, type Spool } from './api'
+import { AdminPage } from './AdminPage'
 import { LoginPage } from './LoginPage'
 import { PrintersPage } from './PrintersPage'
 import { SpoolsPage } from './SpoolsPage'
@@ -16,6 +17,7 @@ const navigationItems = [
   { label: 'Vue d’ensemble', path: '/', icon: '⌂' },
   { label: 'Imprimantes', path: '/printers', icon: '▣' },
   { label: 'Bobines', path: '/spools', icon: '◉' },
+  { label: 'Administration', path: '/admin', icon: '⚙' },
 ] as const
 
 type NavigationItem = (typeof navigationItems)[number]
@@ -195,6 +197,12 @@ export function App() {
     setIsMobileNavOpen(false)
   }, [])
 
+  const isAdmin = user?.role === 'admin'
+
+  useEffect(() => {
+    if (status === 'authenticated' && activeNav === 'Administration' && !isAdmin) navigate('Vue d’ensemble')
+  }, [activeNav, isAdmin, navigate, status])
+
   if (status === 'loading') {
     return <div className="auth-shell"><p>Chargement…</p></div>
   }
@@ -203,13 +211,15 @@ export function App() {
     return <LoginPage />
   }
 
+  const visibleNavigationItems = navigationItems.filter((item) => item.label !== 'Administration' || isAdmin)
+
   return (
     <div className="app-shell">
       <aside className={isMobileNavOpen ? 'sidebar sidebar--open' : 'sidebar'}>
         <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
         <button type="button" className="mobile-close" aria-label="Fermer le menu" onClick={() => setIsMobileNavOpen(false)}>×</button>
         <nav>
-          {navigationItems.map((item) => (
+          {visibleNavigationItems.map((item) => (
             <button key={item.label} type="button" className={activeNav === item.label ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.label)}>
               <Icon>{item.icon}</Icon>{item.label}
             </button>
@@ -232,7 +242,9 @@ export function App() {
           ? <SpoolsPage />
           : activeNav === 'Imprimantes'
             ? <PrintersPage />
-            : <Dashboard user={user} onSelectNav={navigate} />}
+            : activeNav === 'Administration' && isAdmin
+              ? <AdminPage />
+              : <Dashboard user={user} onSelectNav={navigate} />}
       </main>
     </div>
   )

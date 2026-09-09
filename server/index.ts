@@ -88,6 +88,17 @@ function requireAuth(request: express.Request, response: express.Response, next:
   next()
 }
 
+async function requireAdmin(request: express.Request, response: express.Response, next: express.NextFunction) {
+  const database = requirePool(response)
+  if (!database) return
+  const user = request.session.userId ? await findPublicUserById(database, request.session.userId) : null
+  if (!user || user.role !== 'admin') {
+    response.status(403).json({ error: 'Admin privileges required' })
+    return
+  }
+  next()
+}
+
 function isSafeMethod(method: string) {
   return method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
 }
@@ -138,6 +149,7 @@ function isValidUrl(value: string) {
 }
 
 type PublicUser = { id: string; email: string; name: string; role: string }
+type AppSettings = { registrationEnabled: boolean; localLoginEnabled: boolean; authentikEnabled: boolean }
 
 async function parseJson(response: Response) {
   try {
@@ -157,6 +169,18 @@ async function loadPrinter(database: Pool, id: string) {
   return result.rows[0] ?? null
 }
 
+async function loadSettings(database: Pool): Promise<AppSettings> {
+  const result = await database.query(
+    'SELECT registration_enabled, local_login_enabled, authentik_enabled FROM app_settings WHERE id = true',
+  )
+  const row = result.rows[0] as { registration_enabled: boolean; local_login_enabled: boolean; authentik_enabled: boolean } | undefined
+  return {
+    registrationEnabled: row?.registration_enabled ?? true,
+    localLoginEnabled: row?.local_login_enabled ?? true,
+    authentikEnabled: row?.authentik_enabled ?? false,
+  }
+}
+
 app.post('/api/auth/register', csrfSynchronisedProtection, async (request, response) => {
   const database = requirePool(response)
   if (!database) return
@@ -167,11 +191,17 @@ app.post('/api/auth/register', csrfSynchronisedProtection, async (request, respo
     return
   }
 
+  const settings = await loadSettings(database)
+  if (!settings.registrationEnabled) {
+    response.status(403).json({ error: 'Les inscriptions sont désactivées' })
+    return
+  }
+
   try {
     const passwordHash = await bcrypt.hash(password, 12)
     const result = await database.query(
-      `INSERT INTO users (email, password_hash, name)
-       VALUES ($1, $2, $3)
+      `INSERT INTO users (email, password_hash, name, role)
+       VALUES ($1, $2, $3, CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'member' ELSE 'admin' END)
        RETURNING id, email, name, role`,
       [email.trim().toLowerCase(), passwordHash, name.trim()],
     )
@@ -201,6 +231,12 @@ app.post('/api/auth/login', csrfSynchronisedProtection, async (request, response
   const { email, password } = request.body as Record<string, unknown>
   if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
     response.status(400).json({ error: 'Email et mot de passe requis' })
+    return
+  }
+
+  const settings = await loadSettings(database)
+  if (!settings.localLoginEnabled) {
+    response.status(403).json({ error: 'La connexion par mot de passe est désactivée' })
     return
   }
 
@@ -256,6 +292,153 @@ app.get('/api/auth/me', async (request, response) => {
     response.json(user)
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load session' })
+  }
+})
+
+app.get('/api/settings', async (_request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    response.json(await loadSettings(database))
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load settings' })
+  }
+})
+
+app.patch('/api/settings', csrfSynchronisedProtection, requireAuth, requireAdmin, async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  const { registrationEnabled, localLoginEnabled, authentikEnabled } = request.body as Record<string, unknown>
+  if ((registrationEnabled !== undefined && typeof registrationEnabled !== 'boolean') ||
+      (localLoginEnabled !== undefined && typeof localLoginEnabled !== 'boolean') ||
+      (authentikEnabled !== undefined && typeof authentikEnabled !== 'boolean')) {
+    response.status(400).json({ error: 'Invalid settings update' })
+    return
+  }
+
+  if (authentikEnabled === true) {
+    response.status(400).json({ error: 'Authentik n’est pas encore disponible' })
+    return
+  }
+
+  try {
+    const current = await loadSettings(database)
+    const nextLocalLogin = localLoginEnabled ?? current.localLoginEnabled
+    const nextAuthentik = authentikEnabled ?? current.authentikEnabled
+    if (!nextLocalLogin && !nextAuthentik) {
+      response.status(400).json({ error: 'Au moins une méthode de connexion doit rester active' })
+      return
+    }
+
+    await database.query(
+      `UPDATE app_settings
+       SET registration_enabled = COALESCE($1, registration_enabled),
+           local_login_enabled = COALESCE($2, local_login_enabled),
+           authentik_enabled = COALESCE($3, authentik_enabled),
+           updated_at = now()
+       WHERE id = true`,
+      [registrationEnabled ?? null, localLoginEnabled ?? null, authentikEnabled ?? null],
+    )
+    response.json(await loadSettings(database))
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to update settings' })
+  }
+})
+
+app.get('/api/admin/users', requireAuth, requireAdmin, async (_request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+
+  try {
+    const result = await database.query(
+      'SELECT id, email, name, role, auth_provider, created_at FROM users ORDER BY created_at',
+    )
+    response.json(result.rows)
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to load users' })
+  }
+})
+
+app.patch('/api/admin/users/:id', csrfSynchronisedProtection, requireAuth, requireAdmin, async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const userId = routeParam(request.params.id)
+  if (!userId) {
+    response.status(400).json({ error: 'Invalid user id' })
+    return
+  }
+
+  const { role } = request.body as Record<string, unknown>
+  if (role !== undefined && role !== 'admin' && role !== 'member') {
+    response.status(400).json({ error: 'Invalid role' })
+    return
+  }
+
+  try {
+    if (role === 'member') {
+      const target = await database.query('SELECT role FROM users WHERE id = $1', [userId])
+      if (target.rowCount === 0) {
+        response.status(404).json({ error: 'User not found' })
+        return
+      }
+      if (target.rows[0].role === 'admin') {
+        const adminCount = await database.query("SELECT count(*)::int AS count FROM users WHERE role = 'admin'")
+        if (adminCount.rows[0].count <= 1) {
+          response.status(400).json({ error: 'Impossible de retirer le dernier administrateur' })
+          return
+        }
+      }
+    }
+
+    const result = await database.query(
+      `UPDATE users SET role = COALESCE($1, role) WHERE id = $2
+       RETURNING id, email, name, role, auth_provider, created_at`,
+      [role ?? null, userId],
+    )
+    if (result.rowCount === 0) {
+      response.status(404).json({ error: 'User not found' })
+      return
+    }
+    response.json(result.rows[0])
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to update user' })
+  }
+})
+
+app.delete('/api/admin/users/:id', csrfSynchronisedProtection, requireAuth, requireAdmin, async (request, response) => {
+  const database = requirePool(response)
+  if (!database) return
+  const userId = routeParam(request.params.id)
+  if (!userId) {
+    response.status(400).json({ error: 'Invalid user id' })
+    return
+  }
+
+  if (userId === request.session.userId) {
+    response.status(400).json({ error: 'Impossible de supprimer son propre compte' })
+    return
+  }
+
+  try {
+    const target = await database.query('SELECT role FROM users WHERE id = $1', [userId])
+    if (target.rowCount === 0) {
+      response.status(404).json({ error: 'User not found' })
+      return
+    }
+    if (target.rows[0].role === 'admin') {
+      const adminCount = await database.query("SELECT count(*)::int AS count FROM users WHERE role = 'admin'")
+      if (adminCount.rows[0].count <= 1) {
+        response.status(400).json({ error: 'Impossible de supprimer le dernier administrateur' })
+        return
+      }
+    }
+
+    await database.query('DELETE FROM users WHERE id = $1', [userId])
+    response.status(204).end()
+  } catch (error) {
+    response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to delete user' })
   }
 })
 
