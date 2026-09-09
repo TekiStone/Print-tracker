@@ -11,6 +11,8 @@ function fakePool() {
   return { query: vi.fn() } as unknown as FakePool
 }
 
+const defaultSettingsRow = { rows: [{ registration_enabled: true, local_login_enabled: true, authentik_enabled: false }] }
+
 async function csrfToken(agent: ReturnType<typeof request.agent>) {
   const response = await agent.get('/api/auth/csrf-token')
   expect(response.status).toBe(200)
@@ -76,6 +78,7 @@ describe('API HTTP', () => {
   it('inscrit un utilisateur, recharge la session puis déconnecte', async () => {
     const database = fakePool()
     database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
     setDatabasePool(database)
@@ -96,8 +99,11 @@ describe('API HTTP', () => {
   it('valide inscription, doublon et connexion locale', async () => {
     const database = fakePool()
     database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockRejectedValueOnce({ code: '23505' })
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin', password_hash: await import('bcryptjs').then(({ default: bcrypt }) => bcrypt.hash('mot-de-passe-valide', 4)) }] })
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin', password_hash: 'hash-invalide' }] })
     setDatabasePool(database)
 
@@ -123,6 +129,7 @@ describe('API HTTP', () => {
   it('crée, modifie, liste et archive les bobines', async () => {
     const database = fakePool()
     database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'spool-1', brand: 'Prusament', material: 'PLA', color: 'Orange', remaining_grams: 900, initial_grams: 1000, location: 'A1', qr_url: null, prusament_id: null }] })
       .mockResolvedValueOnce({ rows: [{ id: 'spool-1', brand: 'Prusament', material: 'PLA', color: 'Orange', remaining_grams: 850, initial_grams: 1000, location: 'B2', qr_url: null, prusament_id: null }], rowCount: 1 })
@@ -148,7 +155,9 @@ describe('API HTTP', () => {
 
   it('valide les données bobine avant écriture', async () => {
     const database = fakePool()
-    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
+    database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
+      .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
     setDatabasePool(database)
     const agent = request.agent(app)
     await register(agent)
@@ -160,13 +169,14 @@ describe('API HTTP', () => {
 
     expect(create.status).toBe(400)
     expect(update.status).toBe(400)
-    expect(database.query).toHaveBeenCalledTimes(1)
+    expect(database.query).toHaveBeenCalledTimes(2)
   })
 
   it('crée, modifie, liste, synchronise et supprime une imprimante', async () => {
     const database = fakePool()
     const printerRow = { id: 'printer-1', name: 'Prusa XL', model: 'XL 5T', status: 'ready', current_job: null, progress: null, color: '#f27852', last_seen_at: null, prusalink_url: 'http://printer.local', prusalink_enabled: true }
     database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
       .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'spool-1' }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [{ id: 'printer-1' }], rowCount: 1 })
@@ -205,7 +215,9 @@ describe('API HTTP', () => {
 
   it('couvre les validations et erreurs des routes imprimantes', async () => {
     const database = fakePool()
-    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
+    database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
+      .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
     setDatabasePool(database)
     const agent = request.agent(app)
     await register(agent)
@@ -243,7 +255,9 @@ describe('API HTTP', () => {
 
   it('couvre les erreurs et ressources absentes des routes bobines et auth', async () => {
     const database = fakePool()
-    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
+    database.query
+      .mockResolvedValueOnce(defaultSettingsRow)
+      .mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'atelier@example.test', name: 'Atelier', role: 'admin' }] })
     setDatabasePool(database)
     const agent = request.agent(app)
     await register(agent)
@@ -278,5 +292,146 @@ describe('API HTTP', () => {
     expect(update.status).toBe(500)
     expect(missingDelete.status).toBe(404)
     expect(deleteResponse.status).toBe(500)
+  })
+
+  it('expose les paramètres publics sans authentification', async () => {
+    const database = fakePool()
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    setDatabasePool(database)
+
+    const response = await request(app).get('/api/settings')
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false })
+  })
+
+  it('bloque l’inscription quand elle est désactivée', async () => {
+    const database = fakePool()
+    const agent = request.agent(app)
+    setDatabasePool(database)
+    const token = await csrfToken(agent)
+
+    database.query.mockResolvedValueOnce({ rows: [{ registration_enabled: false, local_login_enabled: true, authentik_enabled: false }] })
+    const response = await agent.post('/api/auth/register').set('Origin', webOrigin).set('x-csrf-token', token).send({ email: 'atelier@example.test', password: 'mot-de-passe-valide', name: 'Atelier' })
+
+    expect(response.status).toBe(403)
+    expect(response.body).toEqual({ error: 'Les inscriptions sont désactivées' })
+  })
+
+  it('bloque la connexion locale quand elle est désactivée', async () => {
+    const database = fakePool()
+    const agent = request.agent(app)
+    setDatabasePool(database)
+    const token = await csrfToken(agent)
+
+    database.query.mockResolvedValueOnce({ rows: [{ registration_enabled: true, local_login_enabled: false, authentik_enabled: false }] })
+    const response = await agent.post('/api/auth/login').set('Origin', webOrigin).set('x-csrf-token', token).send({ email: 'atelier@example.test', password: 'mot-de-passe-valide' })
+
+    expect(response.status).toBe(403)
+    expect(response.body).toEqual({ error: 'La connexion par mot de passe est désactivée' })
+  })
+
+  it('réserve les mutations de paramètres aux admins et empêche le verrouillage de la connexion', async () => {
+    const database = fakePool()
+    setDatabasePool(database)
+
+    const memberAgent = request.agent(app)
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' }] })
+    await register(memberAgent, { id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' }] })
+    const forbiddenToken = await csrfToken(memberAgent)
+    const forbidden = await memberAgent.patch('/api/settings').set('Origin', webOrigin).set('x-csrf-token', forbiddenToken).send({ registrationEnabled: false })
+
+    const adminAgent = request.agent(app)
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    await register(adminAgent, { id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    const authentikToken = await csrfToken(adminAgent)
+    const authentikRejected = await adminAgent.patch('/api/settings').set('Origin', webOrigin).set('x-csrf-token', authentikToken).send({ authentikEnabled: true })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    const lockoutToken = await csrfToken(adminAgent)
+    const lockoutRejected = await adminAgent.patch('/api/settings').set('Origin', webOrigin).set('x-csrf-token', lockoutToken).send({ localLoginEnabled: false })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    database.query.mockResolvedValueOnce({ rows: [] })
+    database.query.mockResolvedValueOnce({ rows: [{ registration_enabled: false, local_login_enabled: true, authentik_enabled: false }] })
+    const successToken = await csrfToken(adminAgent)
+    const success = await adminAgent.patch('/api/settings').set('Origin', webOrigin).set('x-csrf-token', successToken).send({ registrationEnabled: false })
+
+    expect(forbidden.status).toBe(403)
+    expect(authentikRejected.status).toBe(400)
+    expect(lockoutRejected.status).toBe(400)
+    expect(success.status).toBe(200)
+    expect(success.body).toEqual({ registrationEnabled: false, localLoginEnabled: true, authentikEnabled: false })
+  })
+
+  it('gère la liste et la promotion des utilisateurs, et protège le dernier admin', async () => {
+    const database = fakePool()
+    setDatabasePool(database)
+
+    const adminAgent = request.agent(app)
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    await register(adminAgent, { id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce({
+      rows: [
+        { id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin', auth_provider: 'local', created_at: '2026-01-01T00:00:00Z' },
+        { id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member', auth_provider: 'local', created_at: '2026-01-02T00:00:00Z' },
+      ],
+    })
+    const list = await adminAgent.get('/api/admin/users')
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce({ rows: [{ role: 'admin' }] })
+    database.query.mockResolvedValueOnce({ rows: [{ count: 1 }] })
+    const demoteToken = await csrfToken(adminAgent)
+    const demoteBlocked = await adminAgent.patch('/api/admin/users/user-1').set('Origin', webOrigin).set('x-csrf-token', demoteToken).send({ role: 'member' })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    const selfDeleteToken = await csrfToken(adminAgent)
+    const selfDeleteBlocked = await adminAgent.delete('/api/admin/users/user-1').set('Origin', webOrigin).set('x-csrf-token', selfDeleteToken)
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce({ rows: [{ role: 'admin' }] })
+    database.query.mockResolvedValueOnce({ rows: [{ count: 1 }] })
+    const deleteToken = await csrfToken(adminAgent)
+    const deleteBlocked = await adminAgent.delete('/api/admin/users/user-3').set('Origin', webOrigin).set('x-csrf-token', deleteToken)
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-1', email: 'admin@example.test', name: 'Admin', role: 'admin' }] })
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'admin', auth_provider: 'local', created_at: '2026-01-02T00:00:00Z' }] })
+    const promoteToken = await csrfToken(adminAgent)
+    const promote = await adminAgent.patch('/api/admin/users/user-2').set('Origin', webOrigin).set('x-csrf-token', promoteToken).send({ role: 'admin' })
+
+    expect(list.status).toBe(200)
+    expect(list.body).toHaveLength(2)
+    expect(demoteBlocked.status).toBe(400)
+    expect(selfDeleteBlocked.status).toBe(400)
+    expect(deleteBlocked.status).toBe(400)
+    expect(promote.status).toBe(200)
+    expect(promote.body.role).toBe('admin')
+  })
+
+  it('refuse la console admin aux membres', async () => {
+    const database = fakePool()
+    setDatabasePool(database)
+
+    const memberAgent = request.agent(app)
+    database.query.mockResolvedValueOnce(defaultSettingsRow)
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' }] })
+    await register(memberAgent, { id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' })
+
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'user-2', email: 'member@example.test', name: 'Membre', role: 'member' }] })
+    const list = await memberAgent.get('/api/admin/users')
+
+    expect(list.status).toBe(403)
   })
 })

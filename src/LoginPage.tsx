@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { getSettings, type AppSettings } from './api'
 import { useAuth } from './auth'
+
+const defaultSettings: AppSettings = { registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false }
 
 export function LoginPage() {
   const { login, register } = useAuth()
@@ -10,6 +13,25 @@ export function LoginPage() {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings)
+
+  useEffect(() => {
+    let cancelled = false
+    getSettings()
+      .then((loaded) => {
+        if (!cancelled) setSettings(loaded)
+      })
+      .catch(() => {
+        // Garde les valeurs par défaut si le chargement échoue
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!settings.registrationEnabled && mode === 'register') setMode('login')
+  }, [mode, settings.registrationEnabled])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -26,6 +48,18 @@ export function LoginPage() {
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  if (!settings.localLoginEnabled) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card">
+          <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
+          <h1>Connexion</h1>
+          <p className="subtitle">La connexion par mot de passe est désactivée. Contacte un administrateur.</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -53,9 +87,11 @@ export function LoginPage() {
           {isSubmitting ? 'Un instant…' : mode === 'login' ? 'Se connecter' : 'S’inscrire'}
         </button>
 
-        <button type="button" className="text-button auth-switch" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
-          {mode === 'login' ? 'Pas encore de compte ? S’inscrire' : 'Déjà un compte ? Se connecter'}
-        </button>
+        {settings.registrationEnabled && (
+          <button type="button" className="text-button auth-switch" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
+            {mode === 'login' ? 'Pas encore de compte ? S’inscrire' : 'Déjà un compte ? Se connecter'}
+          </button>
+        )}
       </form>
     </div>
   )

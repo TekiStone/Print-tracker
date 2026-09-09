@@ -16,8 +16,9 @@ Le dépôt contient un dashboard React/Vite responsive et un backend Express/Pos
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
 - écran de gestion des imprimantes avec configuration PrusaLink, synchronisation manuelle, bobine active et historique récent
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
-- API `/health`, `/api/auth/*` et CRUD `/api/printers` / `/api/spools`
-- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql`, `003_add_users.sql`, `003_add_prusalink_sync.sql` et `004_link_prusalink_spools.sql`
+- console d'administration (`/admin`, réservée au rôle `admin`) pour gérer les utilisateurs (rôle, suppression), retrouver les écrans imprimantes/bobines, et activer/désactiver l'inscription, la connexion locale par mot de passe et un futur toggle Authentik (placeholder, pas encore actif)
+- API `/health`, `/api/auth/*`, `/api/settings`, `/api/admin/*` et CRUD `/api/printers` / `/api/spools`
+- migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql`, `003_add_users.sql`, `003_add_prusalink_sync.sql`, `004_link_prusalink_spools.sql` et `005_add_admin_console.sql`
 
 ## Démarrage
 
@@ -50,6 +51,10 @@ Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compt
 Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_SECURE=true` en production derrière HTTPS).
 
 La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
+
+### Console d'administration
+
+Le premier compte créé sur une instance (base vide) devient automatiquement `admin` ; tous les comptes suivants sont créés en `member`. Un admin accède à `/admin` pour gérer les autres comptes (changement de rôle, suppression — impossible sur son propre compte ou sur le dernier admin restant) et pour activer/désactiver l'inscription et la connexion locale depuis l'onglet Paramètres. Le toggle Authentik y est visible mais désactivé tant que l'intégration OIDC n'est pas branchée sur le serveur.
 
 ### Intégration PrusaLink
 

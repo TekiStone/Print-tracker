@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { getSettings } from '../src/api'
 import { LoginPage } from '../src/LoginPage'
 import { useAuth } from '../src/auth'
 
 vi.mock('../src/auth', () => ({
   useAuth: vi.fn(),
+}))
+
+vi.mock('../src/api', () => ({
+  getSettings: vi.fn(),
 }))
 
 describe('page de connexion', () => {
@@ -20,6 +25,7 @@ describe('page de connexion', () => {
       register,
       logout: vi.fn(),
     })
+    vi.mocked(getSettings).mockResolvedValue({ registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false })
   })
 
   it('connecte un utilisateur avec email et mot de passe', async () => {
@@ -53,5 +59,21 @@ describe('page de connexion', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Se connecter' }))
 
     expect(await screen.findByText('Email ou mot de passe incorrect')).toBeInTheDocument()
+  })
+
+  it('masque le formulaire quand la connexion locale est désactivée', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ registrationEnabled: true, localLoginEnabled: false, authentikEnabled: false })
+    render(<LoginPage />)
+
+    expect(await screen.findByText('La connexion par mot de passe est désactivée. Contacte un administrateur.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument()
+  })
+
+  it('masque la bascule d’inscription quand elle est désactivée', async () => {
+    vi.mocked(getSettings).mockResolvedValue({ registrationEnabled: false, localLoginEnabled: true, authentikEnabled: false })
+    render(<LoginPage />)
+
+    await waitFor(() => expect(getSettings).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: 'Pas encore de compte ? S’inscrire' })).not.toBeInTheDocument()
   })
 })

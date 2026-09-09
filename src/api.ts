@@ -115,6 +115,32 @@ export type PrinterPayload = {
   activeSpoolId?: string | null
 }
 
+type ApiAppSettings = {
+  registrationEnabled: boolean
+  localLoginEnabled: boolean
+  authentikEnabled: boolean
+}
+
+type ApiAdminUser = {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'member'
+  auth_provider: string
+  created_at: string
+}
+
+export type AppSettings = ApiAppSettings
+
+export type AdminUser = {
+  id: string
+  email: string
+  name: string
+  role: 'admin' | 'member'
+  authProvider: string
+  createdAt: string
+}
+
 export type PrintJob = {
   id: string
   name: string
@@ -170,6 +196,17 @@ function mapSpool(spool: ApiSpool): Spool {
     location: spool.location ?? '',
     qrUrl: spool.qr_url ?? undefined,
     prusamentId: spool.prusament_id ?? undefined,
+  }
+}
+
+function mapAdminUser(user: ApiAdminUser): AdminUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    authProvider: user.auth_provider,
+    createdAt: user.created_at,
   }
 }
 
@@ -286,6 +323,36 @@ export async function updateSpool(id: string, payload: Partial<SpoolPayload>) {
 
 export async function deleteSpool(id: string) {
   await request<void>(`/api/spools/${id}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getSettings() {
+  return request<ApiAppSettings>('/api/settings')
+}
+
+export async function updateSettings(payload: Partial<AppSettings>) {
+  return request<ApiAppSettings>('/api/settings', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function listUsers() {
+  const users = await request<ApiAdminUser[]>('/api/admin/users')
+  return users.map(mapAdminUser)
+}
+
+export async function updateUserRole(id: string, role: 'admin' | 'member') {
+  const user = await request<ApiAdminUser>(`/api/admin/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  })
+  return mapAdminUser(user)
+}
+
+export async function deleteUser(id: string) {
+  await request<void>(`/api/admin/users/${id}`, {
     method: 'DELETE',
   })
 }
