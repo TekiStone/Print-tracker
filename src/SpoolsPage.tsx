@@ -11,6 +11,20 @@ function matchesHost(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`)
 }
 
+// L'app Caméra iOS lit les QR Prusament (gravés, faible contraste, surface
+// incurvée) via le moteur de vision natif de l'OS ; zxing-js (JS pur) n'y
+// arrive pas de façon fiable. Shape Detection API expose ce même moteur au
+// navigateur, mais TypeScript ne la type pas encore : déclaration minimale.
+type DetectedBarcode = { rawValue: string }
+interface BarcodeDetectorLike {
+  detect(source: CanvasImageSource): Promise<DetectedBarcode[]>
+}
+declare global {
+  interface Window {
+    BarcodeDetector?: new (options: { formats: string[] }) => BarcodeDetectorLike
+  }
+}
+
 function parsePrusamentQr(value: string) {
   const raw = value.trim()
   if (!raw) return null
@@ -84,15 +98,8 @@ export function SpoolsPage() {
 
     let isActive = true
     let invertedTimer: ReturnType<typeof setInterval> | null = null
-    const hints = new Map<DecodeHintType, unknown>([
-      [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]],
-      [DecodeHintType.TRY_HARDER, true],
-    ])
-    const reader = new BrowserQRCodeReader(hints, {
-      delayBetweenScanAttempts: 100,
-      delayBetweenScanSuccess: 100,
-      tryPlayVideoTimeout: 5000,
-    })
+    let nativeFrameHandle: number | null = null
+    let nativeStream: MediaStream | null = null
 
     const constraints: MediaStreamConstraints = {
       audio: false,
@@ -113,6 +120,65 @@ export function SpoolsPage() {
       applyPrusament(parsed)
       return true
     }
+
+    setScanError('')
+
+    const NativeBarcodeDetector = window.BarcodeDetector
+    if (NativeBarcodeDetector) {
+      const detector = new NativeBarcodeDetector({ formats: ['qr_code'] })
+
+      const stopNative = () => {
+        if (nativeFrameHandle !== null) cancelAnimationFrame(nativeFrameHandle)
+        nativeFrameHandle = null
+        nativeStream?.getTracks().forEach((track) => track.stop())
+        nativeStream = null
+      }
+
+      navigator.mediaDevices.getUserMedia(constraints).then((mediaStream) => {
+        if (!isActive) {
+          mediaStream.getTracks().forEach((track) => track.stop())
+          return
+        }
+        nativeStream = mediaStream
+        const video = document.getElementById('qr-video') as HTMLVideoElement | null
+        if (!video) return
+        video.srcObject = mediaStream
+
+        const tick = async () => {
+          if (!isActive) return
+          try {
+            const [barcode] = await detector.detect(video)
+            if (barcode && handleDecodedText(barcode.rawValue)) {
+              stopNative()
+              return
+            }
+          } catch {
+            // Image illisible sur ce tick, on retente au suivant.
+          }
+          if (isActive) nativeFrameHandle = requestAnimationFrame(() => void tick())
+        }
+        void tick()
+      }).catch((error) => {
+        if (!isActive) return
+        setScanError(error instanceof Error ? error.message : 'Impossible de lire le QR code. Vérifie l’autorisation caméra.')
+      })
+
+      return () => {
+        isActive = false
+        stopNative()
+      }
+    }
+
+    // Fallback pour les navigateurs sans Shape Detection API (ex. Firefox).
+    const hints = new Map<DecodeHintType, unknown>([
+      [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]],
+      [DecodeHintType.TRY_HARDER, true],
+    ])
+    const reader = new BrowserQRCodeReader(hints, {
+      delayBetweenScanAttempts: 100,
+      delayBetweenScanSuccess: 100,
+      tryPlayVideoTimeout: 5000,
+    })
 
     // Les QR gravés sur les bobines sont clairs sur fond noir : zxing ne les lit
     // qu'une fois l'image inversée, d'où cette passe complémentaire.
@@ -148,7 +214,6 @@ export function SpoolsPage() {
       }, 400)
     }
 
-    setScanError('')
     void reader.decodeFromConstraints(constraints, 'qr-video', (result, _error, controls) => {
       if (!isActive) {
         controls.stop()
