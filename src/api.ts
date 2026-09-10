@@ -119,6 +119,7 @@ type ApiAppSettings = {
   registrationEnabled: boolean
   localLoginEnabled: boolean
   authentikEnabled: boolean
+  authentikConfigured: boolean
 }
 
 type ApiAdminUser = {

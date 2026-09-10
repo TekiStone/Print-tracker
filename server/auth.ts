@@ -1,9 +1,7 @@
 import crypto from 'node:crypto'
-import { promisify } from 'node:util'
-import type { NextFunction, Request, Response } from 'express'
-import session from 'express-session'
+import type { Request, Response } from 'express'
 
-export type AuthUser = {
+export type OidcProfile = {
   subject: string
   username: string
   email?: string
@@ -13,7 +11,6 @@ export type AuthUser = {
 
 declare module 'express-session' {
   interface SessionData {
-    user?: AuthUser
     oauthState?: string
     oauthVerifier?: string
   }
@@ -29,7 +26,6 @@ type OidcConfiguration = {
   userinfoEndpoint: string
 }
 
-const scrypt = promisify(crypto.scrypt)
 const oidc: OidcConfiguration | null = process.env.OIDC_ISSUER && process.env.OIDC_CLIENT_ID &&
   process.env.OIDC_CLIENT_SECRET && process.env.OIDC_REDIRECT_URI
   ? {
@@ -77,34 +73,6 @@ export function authConfigured() {
   return oidc !== null
 }
 
-export async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.randomBytes(16)
-  const derivedKey = await scrypt(password, salt, 64) as Buffer
-  return `scrypt:${salt.toString('base64url')}:${derivedKey.toString('base64url')}`
-}
-
-export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const [, saltValue, hashValue] = storedHash.split(':')
-  if (!saltValue || !hashValue) return false
-  const salt = Buffer.from(saltValue, 'base64url')
-  const expected = Buffer.from(hashValue, 'base64url')
-  const actual = await scrypt(password, salt, expected.length) as Buffer
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected)
-}
-
-export function sessionMiddleware() {
-  const secret = process.env.SESSION_SECRET
-  if (oidc && (!secret || secret.length < 32)) {
-    throw new Error('SESSION_SECRET must contain at least 32 characters when OIDC is enabled')
-  }
-  return session({
-    secret: secret ?? 'development-only-session-secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 8 * 60 * 60 * 1000 },
-  })
-}
-
 export async function startLogin(request: Request, response: Response) {
   const configuration = await getConfiguration()
   const state = base64Url(crypto.randomBytes(32))
@@ -124,7 +92,7 @@ export async function startLogin(request: Request, response: Response) {
   response.redirect(url.toString())
 }
 
-export async function completeLogin(request: Request, response: Response): Promise<AuthUser | null> {
+export async function completeLogin(request: Request, response: Response): Promise<OidcProfile | null> {
   const configuration = await getConfiguration()
   const { code, state } = request.query
   if (typeof code !== 'string' || typeof state !== 'string' || state !== request.session.oauthState || !request.session.oauthVerifier) {
@@ -164,24 +132,14 @@ export async function completeLogin(request: Request, response: Response): Promi
     response.status(502).send('OIDC profile has no subject')
     return null
   }
-  const user: AuthUser = {
+  const user: OidcProfile = {
     subject: profile.sub,
     username: typeof profile.preferred_username === 'string' ? profile.preferred_username : typeof profile.email === 'string' ? profile.email : profile.sub,
     email: typeof profile.email === 'string' ? profile.email : undefined,
     name: typeof profile.name === 'string' ? profile.name : undefined,
     picture: typeof profile.picture === 'string' ? profile.picture : undefined,
   }
-  request.session.user = user
   delete request.session.oauthState
   delete request.session.oauthVerifier
-  response.redirect('/')
   return user
-}
-
-export function requireAuth(request: Request, response: Response, next: NextFunction, enabled = authConfigured()) {
-  if (!enabled || request.session.user) {
-    next()
-    return
-  }
-  response.status(401).json({ error: 'Authentication required' })
 }
