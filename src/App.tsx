@@ -80,6 +80,7 @@ function PrinterCard({ printer, onSelect }: { printer: Printer, onSelect: () => 
         <div className="job">
           <div className="job__row"><span>{printer.job}</span><strong>{printer.progress}%</strong></div>
           <div className="progress"><span style={{ width: `${printer.progress}%` }} /></div>
+          <button type="button" className="text-button" onClick={onSelect}>Voir les détails →</button>
         </div>
       ) : (
         <div className="printer-empty">

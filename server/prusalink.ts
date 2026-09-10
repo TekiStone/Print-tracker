@@ -302,7 +302,7 @@ async function syncPrintJob(database: Pool, printer: SyncablePrinter, result: Sy
   await database.query(
     `INSERT INTO print_jobs (printer_id, spool_id, name, status, started_at, source, external_job_path, filament_grams, estimated_filament_grams)
      VALUES ($1, $2, $3, $4, now(), 'prusalink', $5, $6, $6)
-     ON CONFLICT (printer_id, external_job_path) WHERE source = 'prusalink' AND completed_at IS NULL
+     ON CONFLICT (printer_id, external_job_path) WHERE source = 'prusalink' AND completed_at IS NULL AND external_job_path IS NOT NULL
      DO UPDATE SET status = EXCLUDED.status,
                    spool_id = COALESCE(print_jobs.spool_id, EXCLUDED.spool_id),
                    filament_grams = COALESCE(print_jobs.filament_grams, EXCLUDED.filament_grams),
