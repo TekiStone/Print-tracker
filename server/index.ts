@@ -9,6 +9,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import session from 'express-session'
 import { Pool } from 'pg'
+import { authConfigured, completeLogin, startLogin } from './auth.js'
 import { runMigrations } from './migrate.js'
 import { startPrusaLinkScheduler, syncPrinter } from './prusalink.js'
 
@@ -25,6 +26,10 @@ const webOrigin = process.env.WEB_ORIGIN ?? 'http://localhost:5173'
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const frontendDirectory = path.join(projectRoot, 'dist')
 const { generateToken, csrfSynchronisedProtection } = csrfSync()
+
+if (authConfigured() && (process.env.SESSION_SECRET?.length ?? 0) < 32) {
+  throw new Error('SESSION_SECRET must contain at least 32 characters when OIDC is enabled')
+}
 
 const printerSelect = `
   SELECT printers.id, printers.name, printers.model, printers.status, printers.current_job, printers.progress, printers.color, printers.last_seen_at, printers.prusalink_url,
@@ -149,7 +154,7 @@ function isValidUrl(value: string) {
 }
 
 type PublicUser = { id: string; email: string; name: string; role: string }
-type AppSettings = { registrationEnabled: boolean; localLoginEnabled: boolean; authentikEnabled: boolean }
+type AppSettings = { registrationEnabled: boolean; localLoginEnabled: boolean; authentikEnabled: boolean; authentikConfigured: boolean }
 
 async function parseJson(response: Response) {
   try {
@@ -178,6 +183,7 @@ async function loadSettings(database: Pool): Promise<AppSettings> {
     registrationEnabled: row?.registration_enabled ?? true,
     localLoginEnabled: row?.local_login_enabled ?? true,
     authentikEnabled: row?.authentik_enabled ?? false,
+    authentikConfigured: authConfigured(),
   }
 }
 
@@ -318,8 +324,8 @@ app.patch('/api/settings', csrfSynchronisedProtection, requireAuth, requireAdmin
     return
   }
 
-  if (authentikEnabled === true) {
-    response.status(400).json({ error: 'Authentik n’est pas encore disponible' })
+  if (authentikEnabled === true && !authConfigured()) {
+    response.status(400).json({ error: 'Authentik n’est pas configuré (variables OIDC_* manquantes côté serveur)' })
     return
   }
 
@@ -769,6 +775,83 @@ app.delete('/api/spools/:id', csrfSynchronisedProtection, requireAuth, async (re
     response.status(204).end()
   } catch (error) {
     response.status(500).json({ error: error instanceof Error ? error.message : 'Unable to archive spool' })
+  }
+})
+
+app.get('/auth/login', async (request, response) => {
+  const database = pool
+  if (!database) {
+    response.redirect('/?authError=disabled')
+    return
+  }
+  const settings = await loadSettings(database)
+  if (!settings.authentikEnabled || !authConfigured()) {
+    response.redirect('/?authError=disabled')
+    return
+  }
+  await startLogin(request, response)
+})
+
+app.get('/auth/callback', async (request, response) => {
+  const database = pool
+  if (!database) {
+    response.redirect('/?authError=disabled')
+    return
+  }
+  const settings = await loadSettings(database)
+  if (!settings.authentikEnabled || !authConfigured()) {
+    response.redirect('/?authError=disabled')
+    return
+  }
+
+  const profile = await completeLogin(request, response)
+  if (!profile) return
+  if (!profile.email) {
+    response.redirect('/?authError=no_email')
+    return
+  }
+
+  try {
+    const byExternalId = await database.query(
+      'SELECT id, email, name, role FROM users WHERE auth_provider = $1 AND external_id = $2',
+      ['authentik', profile.subject],
+    )
+    let user = byExternalId.rows[0] as PublicUser | undefined
+
+    if (!user) {
+      const byEmail = await database.query(
+        'SELECT id, email, name, role FROM users WHERE lower(email) = lower($1)',
+        [profile.email],
+      )
+      if (byEmail.rows[0]) {
+        const linked = await database.query(
+          `UPDATE users SET auth_provider = 'authentik', external_id = $1 WHERE id = $2
+           RETURNING id, email, name, role`,
+          [profile.subject, byEmail.rows[0].id],
+        )
+        user = linked.rows[0] as PublicUser
+      } else {
+        const created = await database.query(
+          `INSERT INTO users (email, name, role, auth_provider, external_id)
+           VALUES ($1, $2, CASE WHEN EXISTS (SELECT 1 FROM users) THEN 'member' ELSE 'admin' END, 'authentik', $3)
+           RETURNING id, email, name, role`,
+          [profile.email.trim().toLowerCase(), profile.name?.trim() || profile.username, profile.subject],
+        )
+        user = created.rows[0] as PublicUser
+      }
+    }
+
+    const authenticatedUser = user
+    request.session.regenerate((error) => {
+      if (error) {
+        response.status(500).send('Unable to create session')
+        return
+      }
+      request.session.userId = authenticatedUser.id
+      response.redirect('/')
+    })
+  } catch (error) {
+    response.status(500).send(error instanceof Error ? error.message : 'Unable to sign in with Authentik')
   }
 })
 

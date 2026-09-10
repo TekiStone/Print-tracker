@@ -3,7 +3,12 @@ import type { FormEvent } from 'react'
 import { getSettings, type AppSettings } from './api'
 import { useAuth } from './auth'
 
-const defaultSettings: AppSettings = { registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false }
+const defaultSettings: AppSettings = { registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false, authentikConfigured: false }
+
+const authErrorMessages: Record<string, string> = {
+  disabled: 'La connexion Authentik est désactivée.',
+  no_email: 'Ton compte Authentik doit avoir un email pour se connecter ici.',
+}
 
 export function LoginPage() {
   const { login, register } = useAuth()
@@ -30,6 +35,14 @@ export function LoginPage() {
   }, [])
 
   useEffect(() => {
+    const authError = new URLSearchParams(window.location.search).get('authError')
+    if (authError) {
+      setError(authErrorMessages[authError] ?? 'Connexion Authentik impossible')
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!settings.registrationEnabled && mode === 'register') setMode('login')
   }, [mode, settings.registrationEnabled])
 
@@ -50,13 +63,21 @@ export function LoginPage() {
     }
   }
 
+  const authentikButton = settings.authentikEnabled && (
+    <button type="button" className="primary-button auth-submit" onClick={() => { window.location.href = '/auth/login' }}>
+      Continuer avec Authentik
+    </button>
+  )
+
   if (!settings.localLoginEnabled) {
     return (
       <div className="auth-shell">
         <div className="auth-card">
           <div className="brand"><div className="brand-mark">P</div><span>print<span>tracker</span></span></div>
           <h1>Connexion</h1>
-          <p className="subtitle">La connexion par mot de passe est désactivée. Contacte un administrateur.</p>
+          {error && <p className="auth-error">{error}</p>}
+          {authentikButton}
+          {!authentikButton && <p className="subtitle">La connexion par mot de passe est désactivée. Contacte un administrateur.</p>}
         </div>
       </div>
     )
@@ -92,6 +113,8 @@ export function LoginPage() {
             {mode === 'login' ? 'Pas encore de compte ? S’inscrire' : 'Déjà un compte ? Se connecter'}
           </button>
         )}
+
+        {authentikButton}
       </form>
     </div>
   )

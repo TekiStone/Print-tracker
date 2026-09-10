@@ -7,7 +7,7 @@ Application web mobile-first pour suivre les imprimantes 3D et le stock de bobin
 Le dépôt contient un dashboard React/Vite responsive et un backend Express/PostgreSQL :
 
 - authentification par email + mot de passe (inscription, connexion, déconnexion) avec session serveur (cookie httpOnly, stockée en base via `connect-pg-simple`)
-- modèle `users` prévu pour une future authentification déléguée à Authentik (colonnes `auth_provider`/`external_id`)
+- authentification déléguée à Authentik (OAuth2/OIDC + PKCE), activable depuis l'admin console quand les variables `OIDC_*` sont configurées
 - toutes les routes `/api/printers` et `/api/spools` nécessitent d'être authentifié
 - état des machines et progression d'impression depuis la base PostgreSQL et PrusaLink
 - synchronisation PrusaLink automatique côté backend avec timeout, journalisation d’erreur et historique des impressions
@@ -16,7 +16,7 @@ Le dépôt contient un dashboard React/Vite responsive et un backend Express/Pos
 - écran de gestion des bobines avec recherche, filtres, ajout, modification et retrait
 - écran de gestion des imprimantes avec configuration PrusaLink, synchronisation manuelle, bobine active et historique récent
 - scan caméra des QR codes Prusament (`https://prusament.com/spool/...`) avec lien vers le rapport qualité
-- console d'administration (`/admin`, réservée au rôle `admin`) pour gérer les utilisateurs (rôle, suppression), retrouver les écrans imprimantes/bobines, et activer/désactiver l'inscription, la connexion locale par mot de passe et un futur toggle Authentik (placeholder, pas encore actif)
+- console d'administration (`/admin`, réservée au rôle `admin`) pour gérer les utilisateurs (rôle, suppression), retrouver les écrans imprimantes/bobines, et activer/désactiver l'inscription, la connexion locale par mot de passe et la connexion Authentik (visible dès que les variables `OIDC_*` sont configurées côté serveur)
 - API `/health`, `/api/auth/*`, `/api/settings`, `/api/admin/*` et CRUD `/api/printers` / `/api/spools`
 - migrations PostgreSQL dans `server/migrations/001_initial.sql`, `002_add_prusament_qr.sql`, `003_add_users.sql`, `003_add_prusalink_sync.sql`, `004_link_prusalink_spools.sql` et `005_add_admin_console.sql`
 
@@ -50,11 +50,11 @@ Avec `DATABASE_URL` configurée, l'écran de connexion permet de créer un compt
 
 Ajoute un `SESSION_SECRET` aléatoire dans l'environnement (et `SESSION_COOKIE_SECURE=true` en production derrière HTTPS).
 
-La table `users` possède des colonnes `auth_provider`/`external_id` prévues pour une future authentification déléguée à Authentik, non activée pour le moment.
+La table `users` possède des colonnes `auth_provider`/`external_id` pour l'authentification déléguée à Authentik. Un compte Authentik dont l'email correspond à un compte local existant y est automatiquement relié.
 
 ### Console d'administration
 
-Le premier compte créé sur une instance (base vide) devient automatiquement `admin` ; tous les comptes suivants sont créés en `member`. Un admin accède à `/admin` pour gérer les autres comptes (changement de rôle, suppression — impossible sur son propre compte ou sur le dernier admin restant) et pour activer/désactiver l'inscription et la connexion locale depuis l'onglet Paramètres. Le toggle Authentik y est visible mais désactivé tant que l'intégration OIDC n'est pas branchée sur le serveur.
+Le premier compte créé sur une instance (base vide) devient automatiquement `admin` ; tous les comptes suivants sont créés en `member`. Un admin accède à `/admin` pour gérer les autres comptes (changement de rôle, suppression — impossible sur son propre compte ou sur le dernier admin restant) et pour activer/désactiver l'inscription et la connexion locale depuis l'onglet Paramètres. Le toggle Authentik n'est activable que si les variables `OIDC_*` (voir `deploy/env/print-tracker-oidc.env.example`) sont configurées côté serveur.
 
 ### Intégration PrusaLink
 

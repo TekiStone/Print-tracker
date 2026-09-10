@@ -302,7 +302,7 @@ describe('API HTTP', () => {
     const response = await request(app).get('/api/settings')
 
     expect(response.status).toBe(200)
-    expect(response.body).toEqual({ registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false })
+    expect(response.body).toEqual({ registrationEnabled: true, localLoginEnabled: true, authentikEnabled: false, authentikConfigured: false })
   })
 
   it('bloque l’inscription quand elle est désactivée', async () => {
@@ -369,7 +369,7 @@ describe('API HTTP', () => {
     expect(authentikRejected.status).toBe(400)
     expect(lockoutRejected.status).toBe(400)
     expect(success.status).toBe(200)
-    expect(success.body).toEqual({ registrationEnabled: false, localLoginEnabled: true, authentikEnabled: false })
+    expect(success.body).toEqual({ registrationEnabled: false, localLoginEnabled: true, authentikEnabled: false, authentikConfigured: false })
   })
 
   it('gère la liste et la promotion des utilisateurs, et protège le dernier admin', async () => {

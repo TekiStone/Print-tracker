@@ -169,15 +169,27 @@ function SettingsTab() {
         </label>
       </div>
 
-      <div className="settings-row settings-row--disabled">
-        <div>
-          <strong>Authentification Authentik <span className="soon-badge">Bientôt disponible</span></strong>
-          <p>Connexion déléguée via Authentik (SSO). Pas encore implémentée.</p>
+      {settings.authentikConfigured ? (
+        <div className="settings-row">
+          <div>
+            <strong>Authentification Authentik (SSO)</strong>
+            <p>Autorise la connexion déléguée via Authentik.</p>
+          </div>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={settings.authentikEnabled} disabled={isSaving} onChange={() => void toggle('authentikEnabled')} />
+          </label>
         </div>
-        <label className="checkbox-field">
-          <input type="checkbox" checked={settings.authentikEnabled} disabled />
-        </label>
-      </div>
+      ) : (
+        <div className="settings-row settings-row--disabled">
+          <div>
+            <strong>Authentification Authentik <span className="soon-badge">Bientôt disponible</span></strong>
+            <p>Configure les variables OIDC_* côté serveur pour l’activer.</p>
+          </div>
+          <label className="checkbox-field">
+            <input type="checkbox" checked={settings.authentikEnabled} disabled />
+          </label>
+        </div>
+      )}
     </section>
   )
 }
